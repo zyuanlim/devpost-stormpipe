@@ -13,6 +13,83 @@ The judging criteria — technological implementation, design, potential impact,
 
 ***
 
+## 0. Implementation Status (updated 2026-05-25)
+
+> This section reflects the **actual build**. It supersedes the original plan where they diverge. The rest of this document is retained as the original design reference.
+
+### 0.1 Dataset pivot: Storm Events → GHCN-Daily
+
+The implementation uses **NOAA GHCN-Daily** (`s3://noaa-ghcn-pds`, `csv.gz/by_year/` 2020–2024), **not** NOAA Storm Events (`noaa-swdi-pds`). Consequences:
+- Single table `noaa_ghcn.observations` (8 logical columns), not details/locations/fatalities.
+- The "finicky" challenge is **not** K/M property-damage parsing or 489→48 event-taxonomy normalization. Those FRs (FR-03 original, FR-04) are **dropped** — GHCN ELEMENT codes are already standardized.
+- New hero challenge below.
+
+### 0.2 The hero bug: headerless-CSV misparse
+
+GHCN `by_year` CSVs are **headerless**, but the Fivetran S3 connector `personified_hither` was created with `empty_header=false`, so Fivetran consumed each yearly file's first data row as the header. Result: `observations` (186,963,714 rows) has columns named after data values (`ae_000041196`, `_20210101`…`_20240101`, `tmax/tmin/tavg`, `_278/_168/_204/_252`, flags `s`/`h`), each logical field scattered across per-file columns, and **`Q_FLAG` + `OBS_TIME` destroyed** (empty in row 1 → no column). This is the agent's reason to exist and the demo centerpiece. Snapshot `noaa_ghcn._observations_misparsed_snapshot` preserves the broken state.
+
+### 0.3 FR status
+
+| FR | Status | Notes |
+|----|--------|-------|
+| FR-01 Fivetran S3→BQ ingest | ✅ Done | Connector live; 186.9M rows synced (misparsed). |
+| FR-02 Schema drift detection | ✅ Done | `detect_header_as_data_misparse` + `compare_schemas` + `build_reconstruction_mapping`; verified live (conf 0.99). |
+| FR-03 Value parsing ambiguity | ✅ Adapted | Not K/M — instead tenths→SI conversion, `-9999`→NULL, **headerless-misparse reconstruction** via COALESCE. `observations_clean` built (186.9M rows, 76 elements). |
+| FR-04 Event taxonomy 489→48 | ❌ Dropped | Storm-Events-specific; N/A for GHCN. |
+| FR-05 Quarantine table | ⚠️ Partial | `_quarantine` + `_audit_log` DDL created, not yet populated. Q_FLAG-based quarantine **blocked by misparse** (Q_FLAG lost) → needs source re-sync. |
+| FR-06 NL operator summary | ✅ Done | `format_pipeline_summary` + orchestrator prose; verified live. |
+| FR-07 Memory Bank persistence | ❌ Not started | |
+| FR-08 Operator chat interface | ✅ Done (local) | React+A2UI SPA in `frontend/` against local `adk api_server`; emits/renders A2UI v0.9. Hosted (Firebase) deploy deferred to Phase B. |
+| FR-09 Observability (Trace/Logging) | ❌ Not started | No infra provisioned. |
+
+**Bonus built (not in original plan):** Fivetran source-self-heal capability — `app/tools/fivetran_tool.py` (`fivetran_connector_status`, `fivetran_diagnose_csv_parsing`, `fivetran_fix_csv_header_config(confirm)`, `fivetran_resync(confirm)`), wired into `pipeline_controller`. Diagnoses `empty_header=false` root cause and can patch+resync to recover lost columns. Mutations gated behind `confirm=True`.
+
+### 0.4 Verified working (runtime evidence)
+
+- Agent runs end-to-end on Vertex (gemini-2.5-pro): orchestrator → sub-agent transfer → tools → live BQ/Fivetran → correct reasoning. Confirmed on two separate flows (schema-misparse diagnosis; pipeline-health check).
+- `observations_clean`: 186,963,714 rows, 76 elements, 638K flagged (trace precip). Tenths conversions spot-checked (PRCP 25654→2565.4mm; SNOW whole-mm).
+- 13 unit tests pass (`tests/unit/test_schema_comparator.py`, `test_notifier.py`); `ruff check` clean.
+
+### 0.5 Next tasks — decided sequence (updated 2026-05-25)
+
+Strategy: front-load free, reversible, high-value local work; batch all billable cloud
+provisioning into one short window right before recording; **do not** re-sync (keep the
+hero-bug demo intact). Eval (T11) is ✅ 6/6, observability code (T3b) is ✅ wired in
+`fast_api_app.py` — only provisioning remains.
+
+**Phase A — free local work (no cloud spend):**
+1. **T9 code wiring** — wire `memory_service_uri` from an `AGENT_ENGINE_ID` env var into
+   `get_fast_api_app`, add `load_memory` tool to the orchestrator, and write the GHCN
+   domain-knowledge preload script (runs later once the engine exists). No provisioning yet.
+2. **T10/T12 frontend** — ✅ DONE (local, against `adk api_server`). React (Vite) SPA in
+   `stormpipe/frontend/` with a custom A2UI v0.9 renderer; agent emits `<a2ui-json>` via
+   prompt-injection (`app/a2ui_setup.py`, gated by `A2UI_ENABLED`). Verified end-to-end:
+   schema-drift query → live BigQuery → rendered Card+Tabs with working tab switching.
+   **Deviation from original plan:** the official `@a2ui/react`/CopilotKit renderer path and
+   the `SendA2uiToClientToolset` A2A path are both broken/coupled on the installed versions
+   (a2a-sdk 1.x dropped `DataPart`; CopilotKit needs its own runtime endpoint), so we use
+   prompt-injection + a focused custom renderer over the BasicCatalog subset. Firebase Hosting
+   deploy of the static bundle is deferred to Phase B (needs `firebase` CLI, not installed).
+   Run locally: `A2UI_ENABLED=1 … adk api_server --port 8042 --allow_origins http://localhost:5173`
+   + `ADK_URL=http://127.0.0.1:8042 npm run dev` in `frontend/`.
+
+**Phase B — billable provisioning, one short window before the demo:**
+3. **T9 provision** — `gcloud ai agent-engines create … --display-name=stormpipe-memory`,
+   set `AGENT_ENGINE_ID`, run the GHCN preload script.
+4. **T13 deploy** — `agents-cli infra single-project --apply` (SA/bucket/IAM) then
+   `agents-cli deploy` to Agent Runtime with `memory_service_uri` + `otel_to_cloud`. This
+   also provisions the observability backend (T3 provisioning) and a public endpoint.
+5. Point the deployed frontend at the Agent Runtime URL; smoke-test end-to-end.
+
+**Phase C — submit:**
+6. **T14 demo video** (3 min) recorded with the hero bug **intact**, then Devpost submission.
+
+**Deferred / do-not-run:** source re-sync (T1) + `_quarantine` populate (FR-05) — would
+destroy the hero-bug demo. Only consider *after* the video is recorded, if at all; the
+`_observations_misparsed_snapshot` already preserves the broken state regardless.
+
+***
+
 ## 1. Product Requirements Document (PRD)
 
 ### 1.1 Problem Statement
@@ -674,16 +751,18 @@ The React frontend uses **AG-UI** (CopilotKit's transport layer, day-0 A2UI comp
 
 ## 8. Setup Checklist
 
-- [ ] Create Fivetran 14-day free trial at `fivetran.com/signup`
-- [ ] Generate Fivetran API Key + Secret from Fivetran Dashboard
-- [ ] Create GCP project, enable BigQuery API, Agent Platform API, Secret Manager API
-- [ ] Store Fivetran credentials in Secret Manager: `FIVETRAN_API_KEY`, `FIVETRAN_API_SECRET`
-- [ ] Run `uvx google-agents-cli setup` to install Agents CLI + skills
-- [ ] Configure Fivetran MCP in `~/.claude.json` for Claude Code
-- [ ] Create Fivetran BigQuery destination (follow quickstart at `fivetran.com/docs/destinations/bigquery/setup-guide`)
-- [ ] Create Fivetran S3 connector pointing to `noaa-swdi-pds` public bucket
-- [ ] Run first sync to validate data landing in BigQuery
-- [ ] Open Claude Code and scaffold: `agents-cli create stormpipe --deployment-target agent_runtime --yes`
+- [x] Create Fivetran 14-day free trial at `fivetran.com/signup`
+- [x] Generate Fivetran API Key + Secret from Fivetran Dashboard
+- [x] Create GCP project (`stormpipe-hackathon`), enable BigQuery API, Agent Platform API, Secret Manager API
+- [x] Store Fivetran credentials in Secret Manager: `FIVETRAN_API_KEY`, `FIVETRAN_API_SECRET`
+- [x] Run `uvx google-agents-cli setup` to install Agents CLI + skills
+- [x] Configure Fivetran MCP in `~/.claude.json` for Claude Code
+- [x] Create Fivetran BigQuery destination (`unconcerned_sweat`, connected)
+- [x] Create Fivetran S3 connector (`personified_hither`) — points to `noaa-ghcn-pds` (NOT `noaa-swdi-pds`; see §0.1)
+- [x] Run first sync to validate data landing in BigQuery (186.9M rows; misparsed — see §0.2)
+- [x] Open Claude Code and scaffold the `stormpipe` ADK project
+- [ ] Provision observability infra (`agents-cli infra single-project`) — FR-09
+- [ ] Deploy to Agent Runtime (`agents-cli deploy`) — needs human approval
 - [ ] Submit to Devpost with public GitHub repo (Apache 2.0 license), hosted agent URL, and 3-minute demo video
 
 ---

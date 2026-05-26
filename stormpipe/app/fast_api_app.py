@@ -39,12 +39,18 @@ session_service_uri = None
 
 artifact_service_uri = f"gs://{logs_bucket_name}" if logs_bucket_name else None
 
+# Vertex AI Memory Bank, keyed off the Agent Engine id. Unset until the engine is
+# provisioned (Phase B); falls back to ADK's in-memory memory service.
+agent_engine_id = os.environ.get("AGENT_ENGINE_ID")
+memory_service_uri = f"agentengine://{agent_engine_id}" if agent_engine_id else None
+
 app: FastAPI = get_fast_api_app(
     agents_dir=AGENT_DIR,
     web=True,
     artifact_service_uri=artifact_service_uri,
     allow_origins=allow_origins,
     session_service_uri=session_service_uri,
+    memory_service_uri=memory_service_uri,
     otel_to_cloud=True,
 )
 app.title = "stormpipe"

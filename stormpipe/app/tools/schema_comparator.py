@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-
+import re
 
 KNOWN_GHCN_SCHEMA = [
     {"name": "ID", "field_type": "STRING", "mode": "NULLABLE"},
@@ -58,6 +58,162 @@ ELEMENT_UNITS = {
 }
 
 MISSING_VALUE_SENTINEL = -9999
+
+CANONICAL_COLUMNS = [c["name"] for c in KNOWN_GHCN_SCHEMA]
+
+# Fivetran-injected metadata — always expected, never a misparse signal.
+FIVETRAN_META_COLUMNS = {
+    "_file",
+    "_line",
+    "_modified",
+    "_fivetran_synced",
+    "_fivetran_id",
+    "_fivetran_deleted",
+}
+
+# GHCN element codes (lowercased) used to spot an element value masquerading as a column name.
+GHCN_ELEMENT_NAMES = {
+    "tmax", "tmin", "tavg", "tobs", "prcp", "snow", "snwd", "wesd", "wesf",
+    "awnd", "wsf2", "wsf5", "wsfg", "wdf2", "wdf5", "wdfg", "pgtm", "evap",
+    "mnpn", "mxpn", "dapr", "mdpr", "thic", "wdmv", "rhmx", "rhmn", "rhav",
+    "awbt", "adpt", "aslp", "astp", "frgt", "frth", "psun", "tsun",
+}
+
+# A date value that became a column name, e.g. "_20210101".
+_DATE_COL_RE = re.compile(r"^_?(19|20)\d{6}$")
+# A bare integer reading that became a column name, e.g. "_278", "_-12".
+_VALUE_COL_RE = re.compile(r"^_-?\d{1,5}$")
+# A station id that became a column name, e.g. "ae_000041196" <- AE000041196.
+_STATION_COL_RE = re.compile(r"^[a-z]{2}_?[a-z0-9]*\d{5,}$")
+
+
+def _classify_misparsed_column(name: str) -> str | None:
+    """Map a single mangled column name to the canonical role it actually holds.
+
+    Returns one of ID / DATE / ELEMENT / DATA_VALUE / FLAG, or None if the name
+    looks like a legitimate canonical/metadata column.
+    """
+    if name in CANONICAL_COLUMNS or name in FIVETRAN_META_COLUMNS:
+        return None
+    if _DATE_COL_RE.match(name):
+        return "DATE"
+    if name.lower() in GHCN_ELEMENT_NAMES:
+        return "ELEMENT"
+    if _STATION_COL_RE.match(name):
+        return "ID"
+    if _VALUE_COL_RE.match(name):
+        return "DATA_VALUE"
+    if len(name) == 1:
+        return "FLAG"
+    return None
+
+
+def detect_header_as_data_misparse(schema: list[dict]) -> dict:
+    """Detect the 'first data row consumed as CSV header' pathology.
+
+    When a headerless CSV is loaded with header-detection enabled, each source
+    file's first row of *values* becomes column *names*. A union across files then
+    scatters one logical field across many per-file columns (e.g. a DATE column
+    per year). This detects that signature and proposes a reconstruction mapping.
+
+    Args:
+        schema: Current BigQuery schema (list of column descriptors).
+
+    Returns:
+        Diagnosis dict with misparse_detected, pathology, role_columns,
+        lost_columns, confidence, and a human-readable diagnosis.
+    """
+    names = [c["name"] for c in schema]
+    roles: dict[str, list[str]] = {"ID": [], "DATE": [], "ELEMENT": [], "DATA_VALUE": [], "FLAG": []}
+    for n in names:
+        role = _classify_misparsed_column(n)
+        if role:
+            roles[role].append(n)
+
+    canonical_present = [n for n in names if n in CANONICAL_COLUMNS]
+    # Misparse signature: core canonical columns absent AND their values appear as column names.
+    core_missing = {"ID", "DATE", "ELEMENT", "DATA_VALUE"} - set(canonical_present)
+    data_as_header = sum(len(roles[r]) for r in ("ID", "DATE", "ELEMENT", "DATA_VALUE"))
+    misparse = bool(core_missing) and data_as_header >= 3
+
+    # Canonical fields with no recoverable source column are lost in the misparse.
+    recoverable = set()
+    if roles["ID"]:
+        recoverable.add("ID")
+    if roles["DATE"]:
+        recoverable.add("DATE")
+    if roles["ELEMENT"]:
+        recoverable.add("ELEMENT")
+    if roles["DATA_VALUE"]:
+        recoverable.add("DATA_VALUE")
+    # Flags are recoverable only as ambiguous candidates; Q_FLAG/OBS_TIME usually lost.
+    lost = [c for c in CANONICAL_COLUMNS if c not in recoverable and c not in {"M_FLAG", "Q_FLAG", "S_FLAG", "OBS_TIME"}]
+    if misparse:
+        # Flag columns are too few to cover M/Q/S/OBS_TIME -> mark the uncovered ones lost.
+        n_flags = len(roles["FLAG"])
+        flag_targets = ["M_FLAG", "S_FLAG", "Q_FLAG", "OBS_TIME"]
+        lost += flag_targets[n_flags:]
+
+    confidence = 0.0
+    if misparse:
+        confidence = min(0.99, 0.6 + 0.1 * data_as_header)
+
+    return {
+        "misparse_detected": misparse,
+        "pathology": "HEADER_AS_DATA" if misparse else None,
+        "diagnosis": (
+            "First data row consumed as CSV header: source files are headerless but were "
+            "loaded with header-detection enabled (empty_header=false). Each file's first-row "
+            "values became column names, and the multi-file union scattered each logical field "
+            "across per-file columns."
+            if misparse
+            else "No header-as-data misparse signature found."
+        ),
+        "role_columns": roles,
+        "recoverable_columns": sorted(recoverable),
+        "lost_columns": sorted(set(lost)),
+        "confidence": round(confidence, 2),
+        "remediation": (
+            "Reconstruct canonical schema in-warehouse via COALESCE of per-file columns, "
+            "then fix the source connector (treat files as headerless) and re-sync to recover "
+            "fields lost in the misparse (e.g. Q_FLAG, OBS_TIME)."
+            if misparse
+            else "None required."
+        ),
+    }
+
+
+def build_reconstruction_mapping(schema: list[dict]) -> dict:
+    """Build SQL expressions that rebuild canonical GHCN columns from a misparsed schema.
+
+    Args:
+        schema: Current (misparsed) BigQuery schema.
+
+    Returns:
+        Dict mapping each canonical column to a BigQuery SQL expression. Unambiguous
+        fields (ID/DATE/ELEMENT/DATA_VALUE) get COALESCE expressions; ambiguous flag
+        columns are returned under 'flag_candidates' for data-driven assignment.
+    """
+    diag = detect_header_as_data_misparse(schema)
+    roles = diag["role_columns"]
+
+    def _coalesce(cols: list[str]) -> str:
+        ordered = sorted(cols)
+        if not ordered:
+            return "CAST(NULL AS STRING)"
+        if len(ordered) == 1:
+            return f"`{ordered[0]}`"
+        return "COALESCE(" + ", ".join(f"`{c}`" for c in ordered) + ")"
+
+    return {
+        "misparse_detected": diag["misparse_detected"],
+        "ID": _coalesce(roles["ID"]),
+        "DATE": f"CAST({_coalesce(roles['DATE'])} AS STRING)",
+        "ELEMENT": _coalesce(roles["ELEMENT"]),
+        "DATA_VALUE": _coalesce(roles["DATA_VALUE"]),
+        "flag_candidates": sorted(roles["FLAG"]),
+        "lost_columns": diag["lost_columns"],
+    }
 
 
 def schema_fingerprint(schema: list[dict]) -> str:

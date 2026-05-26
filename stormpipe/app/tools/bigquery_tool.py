@@ -1,4 +1,5 @@
 import os
+
 from google.cloud import bigquery
 
 PROJECT = os.environ.get("GOOGLE_CLOUD_PROJECT", "stormpipe-hackathon")

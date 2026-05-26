@@ -1,7 +1,6 @@
 """Operator notification and summary generation."""
 
-import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 def format_pipeline_summary(
@@ -19,7 +18,7 @@ def format_pipeline_summary(
     Returns:
         Markdown-formatted summary string.
     """
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    ts = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     lines = [f"## StormPipe Health Report — {ts}", ""]
 
     state = sync_status.get("sync_state", "unknown")

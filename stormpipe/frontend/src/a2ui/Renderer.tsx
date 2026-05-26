@@ -1,0 +1,270 @@
+import { useState } from "react";
+import type { A2uiComponent, ChildList, DynamicString, Surface } from "./types";
+
+// Material-symbol-ish names the agent tends to emit → glyphs, so we avoid an
+// icon-font dependency.
+const ICONS: Record<string, string> = {
+  check_circle: "✓",
+  check: "✓",
+  warning: "⚠",
+  error: "✕",
+  info: "ℹ",
+  database: "🗄",
+  sync: "⟳",
+  schema: "▤",
+  bug_report: "🐞",
+  cleaning_services: "🧹",
+  storage: "🗄",
+};
+
+function jsonPointerGet(root: unknown, pointer: string): unknown {
+  if (!pointer.startsWith("/")) return undefined;
+  let cur: unknown = root;
+  for (const rawSeg of pointer.split("/").slice(1)) {
+    const seg = rawSeg.replace(/~1/g, "/").replace(/~0/g, "~");
+    if (cur == null || typeof cur !== "object") return undefined;
+    cur = (cur as Record<string, unknown>)[seg];
+  }
+  return cur;
+}
+
+// Build a nested object from the flat path→value writes so {path} bindings
+// resolve through it.
+function buildDataRoot(data: Record<string, unknown>): unknown {
+  const root: Record<string, unknown> = {};
+  for (const [path, value] of Object.entries(data)) {
+    if (path === "/" || path === "") {
+      if (value && typeof value === "object") Object.assign(root, value);
+      continue;
+    }
+    const segs = path.split("/").slice(1);
+    let cur: Record<string, unknown> = root;
+    for (let i = 0; i < segs.length - 1; i++) {
+      const s = segs[i];
+      if (typeof cur[s] !== "object" || cur[s] == null) cur[s] = {};
+      cur = cur[s] as Record<string, unknown>;
+    }
+    cur[segs[segs.length - 1]] = value;
+  }
+  return root;
+}
+
+interface Ctx {
+  surface: Surface;
+  dataRoot: unknown;
+  scope: unknown; // local item scope for templated children
+  onAction?: (eventName: string, context?: unknown) => void;
+}
+
+function resolveString(ds: DynamicString | undefined, ctx: Ctx): string {
+  if (ds == null) return "";
+  if (typeof ds === "string") return ds;
+  if (typeof ds === "object" && "path" in ds) {
+    const v =
+      jsonPointerGet(ctx.scope, ds.path) ?? jsonPointerGet(ctx.dataRoot, ds.path);
+    return v == null ? "" : String(v);
+  }
+  return "";
+}
+
+function resolveChildIds(children: ChildList | undefined, ctx: Ctx): {
+  ids: string[];
+  scopes: unknown[];
+} {
+  if (!children) return { ids: [], scopes: [] };
+  if (Array.isArray(children)) {
+    return { ids: children, scopes: children.map(() => ctx.scope) };
+  }
+  // Template: repeat componentId for each item at `path`.
+  const list = jsonPointerGet(ctx.dataRoot, children.path);
+  if (Array.isArray(list)) {
+    return {
+      ids: list.map(() => children.componentId),
+      scopes: list,
+    };
+  }
+  return { ids: [], scopes: [] };
+}
+
+function Node({ id, ctx }: { id: string; ctx: Ctx }) {
+  const c: A2uiComponent | undefined = ctx.surface.components[id];
+  if (!c) return null;
+
+  switch (c.component) {
+    case "Text": {
+      const variant = (c.variant as string) ?? "body";
+      const text = resolveString(c.text as DynamicString, ctx);
+      return <div className={`a2-text a2-${variant}`}>{text}</div>;
+    }
+
+    case "Icon": {
+      const name = (c.name as string) ?? "";
+      return (
+        <span className="a2-icon" title={name}>
+          {ICONS[name] ?? "•"}
+        </span>
+      );
+    }
+
+    case "Image": {
+      const url = c.url as string;
+      const fit = (c.fit as string) ?? "contain";
+      return (
+        <img
+          className="a2-image"
+          src={url}
+          alt={(c.description as string) ?? ""}
+          style={{ objectFit: fit as React.CSSProperties["objectFit"] }}
+        />
+      );
+    }
+
+    case "Divider": {
+      const axis = (c.axis as string) ?? "horizontal";
+      return axis === "vertical" ? (
+        <div className="a2-divider-v" />
+      ) : (
+        <hr className="a2-divider" />
+      );
+    }
+
+    case "Row":
+    case "Column":
+    case "List": {
+      const isRow = c.component === "Row";
+      const { ids, scopes } = resolveChildIds(c.children as ChildList, ctx);
+      const justify = c.justify as string | undefined;
+      const align = c.align as string | undefined;
+      const dir =
+        c.component === "List" && c.direction === "horizontal" ? true : isRow;
+      return (
+        <div
+          className={`a2-${c.component.toLowerCase()}`}
+          style={{
+            display: "flex",
+            flexDirection: dir ? "row" : "column",
+            justifyContent: mapJustify(justify),
+            alignItems: mapAlign(align),
+            gap: 8,
+          }}
+        >
+          {ids.map((cid, i) => (
+            <Node key={`${cid}-${i}`} id={cid} ctx={{ ...ctx, scope: scopes[i] }} />
+          ))}
+        </div>
+      );
+    }
+
+    case "Card": {
+      const child = c.child as string;
+      return (
+        <div className="a2-card">
+          <Node id={child} ctx={ctx} />
+        </div>
+      );
+    }
+
+    case "Tabs": {
+      const tabs = (c.tabs as { title: DynamicString; child: string }[]) ?? [];
+      return <TabsView tabs={tabs} ctx={ctx} />;
+    }
+
+    case "Button": {
+      const child = c.child as string;
+      const variant = (c.variant as string) ?? "default";
+      const action = c.action as { event?: { name: string; context?: unknown } };
+      return (
+        <button
+          className={`a2-button a2-button-${variant}`}
+          onClick={() =>
+            action?.event && ctx.onAction?.(action.event.name, action.event.context)
+          }
+        >
+          <Node id={child} ctx={ctx} />
+        </button>
+      );
+    }
+
+    default:
+      return (
+        <div className="a2-unknown">[unsupported: {c.component}]</div>
+      );
+  }
+}
+
+function TabsView({
+  tabs,
+  ctx,
+}: {
+  tabs: { title: DynamicString; child: string }[];
+  ctx: Ctx;
+}) {
+  const [active, setActive] = useState(0);
+  return (
+    <div className="a2-tabs">
+      <div className="a2-tablist" role="tablist">
+        {tabs.map((t, i) => (
+          <button
+            key={i}
+            role="tab"
+            aria-selected={i === active}
+            className={`a2-tab ${i === active ? "active" : ""}`}
+            onClick={() => setActive(i)}
+          >
+            {resolveString(t.title, ctx)}
+          </button>
+        ))}
+      </div>
+      <div className="a2-tabpanel" role="tabpanel">
+        {tabs[active] && <Node id={tabs[active].child} ctx={ctx} />}
+      </div>
+    </div>
+  );
+}
+
+function mapJustify(j?: string): React.CSSProperties["justifyContent"] {
+  switch (j) {
+    case "spaceBetween":
+      return "space-between";
+    case "start":
+      return "flex-start";
+    case "end":
+      return "flex-end";
+    case "center":
+      return "center";
+    default:
+      return undefined;
+  }
+}
+
+function mapAlign(a?: string): React.CSSProperties["alignItems"] {
+  switch (a) {
+    case "start":
+      return "flex-start";
+    case "end":
+      return "flex-end";
+    case "center":
+      return "center";
+    case "stretch":
+      return "stretch";
+    default:
+      return undefined;
+  }
+}
+
+export function A2uiSurface({
+  surface,
+  onAction,
+}: {
+  surface: Surface;
+  onAction?: (eventName: string, context?: unknown) => void;
+}) {
+  if (!surface.rootId) return null;
+  const ctx: Ctx = {
+    surface,
+    dataRoot: buildDataRoot(surface.data),
+    scope: buildDataRoot(surface.data),
+    onAction,
+  };
+  return <Node id={surface.rootId} ctx={ctx} />;
+}

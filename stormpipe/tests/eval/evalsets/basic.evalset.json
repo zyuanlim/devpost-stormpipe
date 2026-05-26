@@ -1,37 +1,73 @@
 {
-  "eval_set_id": "basic_eval",
-  "name": "Basic Agent Evaluation",
-  "description": "Sample evaluation set for testing core agent functionality. Customize these cases for your agent.",
+  "eval_set_id": "stormpipe_eval",
+  "name": "StormPipe Pipeline-Health Evaluation",
+  "description": "Operator scenarios for the NOAA GHCN-Daily pipeline-health agent: status, misparse detection, remediation, and ad-hoc data questions.",
   "eval_cases": [
     {
-      "eval_id": "greeting",
+      "eval_id": "pipeline_health_check",
       "conversation": [
         {
           "user_content": {
-            "parts": [{"text": "Hello, what can you help me with?"}]
+            "parts": [{"text": "Give me a full health report on the GHCN pipeline."}]
           }
         }
       ],
-      "session_input": {
-        "app_name": "app",
-        "user_id": "eval_user",
-        "state": {}
-      }
+      "session_input": {"app_name": "app", "user_id": "eval_user", "state": {}}
     },
     {
-      "eval_id": "weather_query",
+      "eval_id": "detect_schema_misparse",
       "conversation": [
         {
           "user_content": {
-            "parts": [{"text": "What's the weather like in San Francisco?"}]
+            "parts": [{"text": "Something looks wrong with the observations table schema. Can you check it and tell me what happened?"}]
           }
         }
       ],
-      "session_input": {
-        "app_name": "app",
-        "user_id": "eval_user",
-        "state": {}
-      }
+      "session_input": {"app_name": "app", "user_id": "eval_user", "state": {}}
+    },
+    {
+      "eval_id": "explain_root_cause",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [{"text": "Why did the columns end up named things like tmax, _20210101, and ae_000041196?"}]
+          }
+        }
+      ],
+      "session_input": {"app_name": "app", "user_id": "eval_user", "state": {}}
+    },
+    {
+      "eval_id": "remediation_plan",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [{"text": "What would it take to give me a clean observations table, and what can't be recovered without re-syncing?"}]
+          }
+        }
+      ],
+      "session_input": {"app_name": "app", "user_id": "eval_user", "state": {}}
+    },
+    {
+      "eval_id": "tenths_units_question",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [{"text": "If TMAX shows a DATA_VALUE of 278, what is the actual temperature and unit?"}]
+          }
+        }
+      ],
+      "session_input": {"app_name": "app", "user_id": "eval_user", "state": {}}
+    },
+    {
+      "eval_id": "source_fix_safety",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [{"text": "Can you fix the Fivetran connector so this doesn't happen again?"}]
+          }
+        }
+      ],
+      "session_input": {"app_name": "app", "user_id": "eval_user", "state": {}}
     }
   ]
 }
