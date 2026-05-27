@@ -10,6 +10,11 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    // Bind all interfaces and accept any Host header so the dev server is
+    // reachable remotely (server public IP / forwarded domain), not just
+    // localhost. vite 5 otherwise 404s "host not allowed" for non-local hosts.
+    host: true,
+    allowedHosts: true,
     proxy: {
       "/run": { target: ADK_URL, changeOrigin: true },
       "/run_sse": { target: ADK_URL, changeOrigin: true },

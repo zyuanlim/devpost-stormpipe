@@ -108,6 +108,25 @@ def _classify_misparsed_column(name: str) -> str | None:
     return None
 
 
+def _col_name(c) -> str:
+    """Extract a column name from a schema item regardless of its shape.
+
+    These functions are exposed as agent tools, and the model sometimes supplies
+    column descriptors keyed differently than BigQuery's `name` (e.g.
+    `column_name`, or a bare string). Be tolerant so a stray arg shape can't
+    crash the tool with KeyError.
+    """
+    if isinstance(c, str):
+        return c
+    if isinstance(c, dict):
+        for k in ("name", "column_name", "field", "field_path", "column"):
+            v = c.get(k)
+            if v:
+                return str(v)
+        return json.dumps(c, sort_keys=True)
+    return str(c)
+
+
 def detect_header_as_data_misparse(schema: list[dict]) -> dict:
     """Detect the 'first data row consumed as CSV header' pathology.
 
@@ -123,7 +142,7 @@ def detect_header_as_data_misparse(schema: list[dict]) -> dict:
         Diagnosis dict with misparse_detected, pathology, role_columns,
         lost_columns, confidence, and a human-readable diagnosis.
     """
-    names = [c["name"] for c in schema]
+    names = [_col_name(c) for c in schema]
     roles: dict[str, list[str]] = {"ID": [], "DATE": [], "ELEMENT": [], "DATA_VALUE": [], "FLAG": []}
     for n in names:
         role = _classify_misparsed_column(n)
@@ -218,7 +237,7 @@ def build_reconstruction_mapping(schema: list[dict]) -> dict:
 
 def schema_fingerprint(schema: list[dict]) -> str:
     """SHA-256 fingerprint of a schema for change detection."""
-    canonical = sorted(schema, key=lambda x: x["name"])
+    canonical = sorted(schema, key=_col_name)
     return hashlib.sha256(json.dumps(canonical, sort_keys=True).encode()).hexdigest()[:16]
 
 
@@ -232,26 +251,32 @@ def compare_schemas(current: list[dict], expected: list[dict]) -> dict:
     Returns:
         Dict with added, removed, type_changed, and summary.
     """
-    curr_map = {c["name"]: c for c in current}
-    exp_map = {c["name"]: c for c in expected}
+    curr_map = {_col_name(c): c for c in current}
+    exp_map = {_col_name(c): c for c in expected}
 
-    added = [c for name, c in curr_map.items() if name not in exp_map]
-    removed = [c for name, c in exp_map.items() if name not in curr_map]
+    def _ftype(c) -> str:
+        return str(c.get("field_type", "")) if isinstance(c, dict) else ""
+
+    added_names = [name for name in curr_map if name not in exp_map]
+    removed_names = [name for name in exp_map if name not in curr_map]
     type_changed = [
         {
             "name": name,
-            "old_type": exp_map[name]["field_type"],
-            "new_type": curr_map[name]["field_type"],
+            "old_type": _ftype(exp_map[name]),
+            "new_type": _ftype(curr_map[name]),
         }
         for name in curr_map
-        if name in exp_map and curr_map[name]["field_type"] != exp_map[name]["field_type"]
+        if name in exp_map and _ftype(curr_map[name]) != _ftype(exp_map[name])
     ]
 
+    added = [curr_map[name] for name in added_names]
+    removed = [exp_map[name] for name in removed_names]
+
     changes = []
-    for col in added:
-        changes.append({"column": col["name"], "change_type": "ADDITIVE", "recommendation": "ACCEPT"})
-    for col in removed:
-        changes.append({"column": col["name"], "change_type": "DESTRUCTIVE", "recommendation": "ALERT_OPERATOR"})
+    for name in added_names:
+        changes.append({"column": name, "change_type": "ADDITIVE", "recommendation": "ACCEPT"})
+    for name in removed_names:
+        changes.append({"column": name, "change_type": "DESTRUCTIVE", "recommendation": "ALERT_OPERATOR"})
     for col in type_changed:
         changes.append({"column": col["name"], "change_type": "TYPE_CHANGE", "recommendation": "QUARANTINE"})
 

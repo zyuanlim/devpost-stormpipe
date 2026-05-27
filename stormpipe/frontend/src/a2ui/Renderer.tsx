@@ -86,6 +86,55 @@ function resolveChildIds(children: ChildList | undefined, ctx: Ctx): {
   return { ids: [], scopes: [] };
 }
 
+// A2UI Text allows simple Markdown. Render the common cases the agent emits
+// (**bold**, `code`, and - / * bullet lists) without pulling in a markdown dep.
+function renderInline(text: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  const re = /(\*\*([^*]+)\*\*|`([^`]+)`)/g;
+  let last = 0;
+  let key = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) nodes.push(text.slice(last, m.index));
+    if (m[2] !== undefined) nodes.push(<strong key={key++}>{m[2]}</strong>);
+    else if (m[3] !== undefined) nodes.push(<code key={key++}>{m[3]}</code>);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) nodes.push(text.slice(last));
+  return nodes;
+}
+
+function renderMarkdown(text: string): React.ReactNode {
+  const blocks: React.ReactNode[] = [];
+  let list: string[] = [];
+  let key = 0;
+  const flushList = () => {
+    if (list.length) {
+      const items = list;
+      blocks.push(
+        <ul key={`ul${key++}`} className="a2-md-list">
+          {items.map((li, j) => (
+            <li key={j}>{renderInline(li)}</li>
+          ))}
+        </ul>
+      );
+      list = [];
+    }
+  };
+  for (const line of text.split("\n")) {
+    const t = line.trim();
+    const bullet = t.match(/^[-*]\s+(.*)/);
+    if (bullet) {
+      list.push(bullet[1]);
+      continue;
+    }
+    flushList();
+    if (t) blocks.push(<div key={`p${key++}`}>{renderInline(t)}</div>);
+  }
+  flushList();
+  return <>{blocks}</>;
+}
+
 function Node({ id, ctx }: { id: string; ctx: Ctx }) {
   const c: A2uiComponent | undefined = ctx.surface.components[id];
   if (!c) return null;
@@ -94,7 +143,7 @@ function Node({ id, ctx }: { id: string; ctx: Ctx }) {
     case "Text": {
       const variant = (c.variant as string) ?? "body";
       const text = resolveString(c.text as DynamicString, ctx);
-      return <div className={`a2-text a2-${variant}`}>{text}</div>;
+      return <div className={`a2-text a2-${variant}`}>{renderMarkdown(text)}</div>;
     }
 
     case "Icon": {
