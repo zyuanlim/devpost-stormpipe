@@ -57,7 +57,7 @@ if _static_instruction is not None:
 root_agent = Agent(
     name="stormpipe_orchestrator",
     model=Gemini(
-        model="gemini-2.5-pro",
+        model="gemini-3.5-flash",
         retry_options=types.HttpRetryOptions(attempts=3),
     ),
     description=(

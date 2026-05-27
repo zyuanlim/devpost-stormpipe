@@ -17,7 +17,7 @@ from app.tools.schema_comparator import (
 
 schema_detective_agent = Agent(
     name="schema_detective",
-    model=Gemini(model="gemini-2.5-pro"),
+    model=Gemini(model="gemini-3.5-flash"),
     description=(
         "Detects schema drift in GHCN-Daily BigQuery tables. "
         "Compares current BQ schema against known 8-column GHCN-Daily spec, and "

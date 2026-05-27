@@ -31,7 +31,7 @@ fivetran_mcp = MCPToolset(
 
 pipeline_controller_agent = Agent(
     name="pipeline_controller",
-    model=Gemini(model="gemini-2.5-flash"),
+    model=Gemini(model="gemini-3.5-flash"),
     description=(
         "Controls the Fivetran S3→BigQuery pipeline and heals it at the source. "
         "Checks sync/setup status, diagnoses the headerless-CSV misparse, and (on "

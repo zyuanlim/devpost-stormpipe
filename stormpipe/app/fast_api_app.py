@@ -40,9 +40,20 @@ session_service_uri = None
 artifact_service_uri = f"gs://{logs_bucket_name}" if logs_bucket_name else None
 
 # Vertex AI Memory Bank, keyed off the Agent Engine id. Unset until the engine is
-# provisioned (Phase B); falls back to ADK's in-memory memory service.
+# provisioned; falls back to ADK's in-memory memory service. The URI is built in
+# full-resource form so the memory region is pinned independently of
+# GOOGLE_CLOUD_LOCATION — the agent's Gemini model runs against the `global`
+# endpoint (where gemini-3.5-flash is served) while the Memory Bank stays in its
+# own region (us-central1, where the engine was created).
 agent_engine_id = os.environ.get("AGENT_ENGINE_ID")
-memory_service_uri = f"agentengine://{agent_engine_id}" if agent_engine_id else None
+memory_location = os.environ.get("MEMORY_LOCATION", "us-central1")
+memory_project = os.environ.get("MEMORY_PROJECT", project_id)
+memory_service_uri = (
+    f"agentengine://projects/{memory_project}/locations/{memory_location}"
+    f"/reasoningEngines/{agent_engine_id}"
+    if agent_engine_id
+    else None
+)
 
 # Cloud Trace/Logging export. Off by default — enabling it requires the otel
 # OTLP + GCP exporter packages (opentelemetry-exporter-otlp-proto-http,

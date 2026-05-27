@@ -190,7 +190,7 @@ def ensure_dq_tables() -> dict:
 
 dq_remediator_agent = Agent(
     name="dq_remediator",
-    model=Gemini(model="gemini-2.5-pro"),
+    model=Gemini(model="gemini-3.5-flash"),
     description=(
         "Rebuilds and cleans GHCN-Daily data in BigQuery. Reconstructs the canonical "
         "8-column schema from the misparsed raw table (COALESCE of scattered per-file "
