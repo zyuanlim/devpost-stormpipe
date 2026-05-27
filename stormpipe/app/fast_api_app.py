@@ -44,6 +44,12 @@ artifact_service_uri = f"gs://{logs_bucket_name}" if logs_bucket_name else None
 agent_engine_id = os.environ.get("AGENT_ENGINE_ID")
 memory_service_uri = f"agentengine://{agent_engine_id}" if agent_engine_id else None
 
+# Cloud Trace/Logging export. Off by default — enabling it requires the otel
+# OTLP + GCP exporter packages (opentelemetry-exporter-otlp-proto-http,
+# -gcp-monitoring, -gcp-logging, resourcedetector-gcp); without them the app
+# crashes at import. Gated so the deploy doesn't depend on that chain.
+otel_to_cloud = os.environ.get("OTEL_TO_CLOUD", "").lower() in ("1", "true", "yes")
+
 app: FastAPI = get_fast_api_app(
     agents_dir=AGENT_DIR,
     web=True,
@@ -51,7 +57,7 @@ app: FastAPI = get_fast_api_app(
     allow_origins=allow_origins,
     session_service_uri=session_service_uri,
     memory_service_uri=memory_service_uri,
-    otel_to_cloud=True,
+    otel_to_cloud=otel_to_cloud,
 )
 app.title = "stormpipe"
 app.description = "API for interacting with the Agent stormpipe"

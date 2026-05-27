@@ -73,13 +73,18 @@ hero-bug demo intact). Eval (T11) is ✅ 6/6, observability code (T3b) is ✅ wi
    Run locally: `A2UI_ENABLED=1 … adk api_server --port 8042 --allow_origins http://localhost:5173`
    + `ADK_URL=http://127.0.0.1:8042 npm run dev` in `frontend/`.
 
-**Phase B — billable provisioning, one short window before the demo:**
-3. **T9 provision** — `gcloud ai agent-engines create … --display-name=stormpipe-memory`,
-   set `AGENT_ENGINE_ID`, run the GHCN preload script.
-4. **T13 deploy** — `agents-cli infra single-project --apply` (SA/bucket/IAM) then
-   `agents-cli deploy` to Agent Runtime with `memory_service_uri` + `otel_to_cloud`. This
-   also provisions the observability backend (T3 provisioning) and a public endpoint.
-5. Point the deployed frontend at the Agent Runtime URL; smoke-test end-to-end.
+**Phase B — ✅ DONE 2026-05-27 (billable provisioning):**
+3. **T9 provision** — ✅ Agent Engine created via `vertexai.agent_engines.create()` (the
+   `gcloud ai agent-engines` command does NOT exist in SDK 565). `AGENT_ENGINE_ID=4516136808706211840`.
+   18 GHCN facts preloaded (scope user_id=`operator` to match the frontend). Required IAM:
+   RE service agent → `roles/aiplatform.user` (Memory Bank embedding calls).
+4. **T13 deploy** — ✅ deployed to **Cloud Run** (NOT Agent Runtime): the frontend uses
+   ADK's `/run` REST API which only `fast_api_app` serves, and Cloud Run scales to zero.
+   `https://stormpipe-mued7ds4ba-uc.a.run.app` (public via `allUsers` run.invoker, user-approved).
+   Env: `A2UI_ENABLED=1`, `AGENT_ENGINE_ID`, `ALLOW_ORIGINS`. `otel_to_cloud` gated OFF
+   (`OTEL_TO_CLOUD` env) — observability backend NOT provisioned (needs otel exporter pkgs).
+5. ✅ Frontend pointed at Cloud Run via vite proxy (`ADK_URL=<cloud-url>`); smoke-tested
+   end-to-end — schema-drift + DQ A2UI cards render from live BigQuery.
 
 **Phase C — submit:**
 6. **T14 demo video** (3 min) recorded with the hero bug **intact**, then Devpost submission.
