@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { A2uiSurface } from "./a2ui/Renderer";
+import { A2uiSurface, renderMarkdown } from "./a2ui/Renderer";
 import { parseA2ui } from "./a2ui/parse";
 import type { Surface } from "./a2ui/types";
 import {
@@ -118,7 +118,11 @@ export function App() {
           <div key={i} className={`turn ${turn.role}`}>
             <div className="bubble">
               {turn.pending && <div className="spinner">thinking…</div>}
-              {turn.text && <div className="msg-text">{turn.text}</div>}
+              {turn.text && (
+                <div className="msg-text">
+                  {turn.role === "agent" ? renderMarkdown(turn.text) : turn.text}
+                </div>
+              )}
               {turn.surfaces.map((s) => (
                 <div key={s.surfaceId} className="surface">
                   <A2uiSurface surface={s} onAction={(name) => send(name)} />

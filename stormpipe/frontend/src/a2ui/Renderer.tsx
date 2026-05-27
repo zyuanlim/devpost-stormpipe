@@ -104,9 +104,10 @@ function renderInline(text: string): React.ReactNode[] {
   return nodes;
 }
 
-function renderMarkdown(text: string): React.ReactNode {
+export function renderMarkdown(text: string): React.ReactNode {
   const blocks: React.ReactNode[] = [];
   let list: string[] = [];
+  let code: string[] | null = null;
   let key = 0;
   const flushList = () => {
     if (list.length) {
@@ -121,17 +122,68 @@ function renderMarkdown(text: string): React.ReactNode {
       list = [];
     }
   };
+  const flushCode = () => {
+    if (code !== null) {
+      const body = code.join("\n");
+      blocks.push(
+        <pre key={`pre${key++}`} className="a2-md-code">
+          <code>{body}</code>
+        </pre>
+      );
+      code = null;
+    }
+  };
+
   for (const line of text.split("\n")) {
     const t = line.trim();
+
+    // Fenced code block (```), toggled on the fence lines.
+    if (t.startsWith("```")) {
+      if (code === null) {
+        flushList();
+        code = [];
+      } else {
+        flushCode();
+      }
+      continue;
+    }
+    if (code !== null) {
+      code.push(line);
+      continue;
+    }
+
+    // Horizontal rule: --- / *** / ___
+    if (/^([-*_])\1{2,}$/.test(t)) {
+      flushList();
+      blocks.push(<hr key={`hr${key++}`} className="a2-divider" />);
+      continue;
+    }
+
+    // ATX heading: #..###### → h2..h5
+    const heading = t.match(/^(#{1,6})\s+(.*)$/);
+    if (heading) {
+      flushList();
+      const lvl = Math.min(heading[1].length + 1, 5);
+      blocks.push(
+        <div key={`h${key++}`} className={`a2-text a2-h${lvl}`}>
+          {renderInline(heading[2])}
+        </div>
+      );
+      continue;
+    }
+
+    // Bullet list item
     const bullet = t.match(/^[-*]\s+(.*)/);
     if (bullet) {
       list.push(bullet[1]);
       continue;
     }
+
     flushList();
     if (t) blocks.push(<div key={`p${key++}`}>{renderInline(t)}</div>);
   }
   flushList();
+  flushCode();
   return <>{blocks}</>;
 }
 
