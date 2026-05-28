@@ -9,6 +9,7 @@ import {
   runAgent,
   type Pipeline,
 } from "./adk";
+import { cacheAgeLabel, clearCached, getCached, setCached } from "./cache";
 
 interface Turn {
   role: "user" | "agent";
@@ -48,13 +49,19 @@ export function Workspace({ pipeline }: { pipeline: Pipeline }) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [surfaces, setSurfaces] = useState<Surface[]>([]);
   const [followups, setFollowups] = useState<string[]>(DEFAULT_FOLLOWUPS);
+  const [cachedTs, setCachedTs] = useState<number | null>(null);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const chatRef = useRef<HTMLDivElement>(null);
   const initStarted = useRef(false);
 
-  async function execute(name: string, message: string, showUser: boolean) {
+  async function execute(
+    name: string,
+    message: string,
+    showUser: boolean,
+    opts: { kickoff?: boolean } = {}
+  ) {
     setError(null);
     setBusy(true);
     setInput("");
@@ -66,16 +73,24 @@ export function Workspace({ pipeline }: { pipeline: Pipeline }) {
     try {
       const raw = await runAgent(name, sessionId, message);
       const { text, surfaces: parsed, followups: nextFollowups } = parseA2ui(raw);
+      const greeting = text || (parsed.length ? "Updated the dashboard." : "Done.");
       setTurns((t) => {
         const copy = [...t];
-        copy[copy.length - 1] = {
-          role: "agent",
-          text: text || (parsed.length ? "Updated the dashboard." : "Done."),
-        };
+        copy[copy.length - 1] = { role: "agent", text: greeting };
         return copy;
       });
       if (parsed.length) setSurfaces((prev) => mergeSurfaces(prev, parsed));
       if (nextFollowups.length) setFollowups(nextFollowups);
+      // Only the kickoff response is cacheable as the dashboard baseline —
+      // follow-up turns are operator-driven and would poison the cache.
+      if (opts.kickoff && parsed.length) {
+        setCached(pipeline.connector_id, {
+          text: greeting,
+          surfaces: parsed,
+          followups: nextFollowups.length ? nextFollowups : DEFAULT_FOLLOWUPS,
+        });
+        setCachedTs(Date.now());
+      }
     } catch (e) {
       setError(String(e));
       setTurns((t) => {
@@ -102,10 +117,31 @@ export function Workspace({ pipeline }: { pipeline: Pipeline }) {
         selected_connector_name: pipeline.connector_id,
       });
       setAppName(name);
-      await execute(name, KICKOFF, false);
+
+      // Hydrate from cache if fresh — the kickoff turn is the slow path (~90s),
+      // and Fivetran sync state moves slowly enough that a 10 min TTL is fine.
+      const cached = getCached(pipeline.connector_id);
+      if (cached) {
+        setSurfaces(cached.surfaces);
+        setFollowups(cached.followups.length ? cached.followups : DEFAULT_FOLLOWUPS);
+        setTurns([{ role: "agent", text: cached.text }]);
+        setCachedTs(cached.ts);
+        return;
+      }
+      await execute(name, KICKOFF, false, { kickoff: true });
     })().catch((e) => setError(String(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function refresh() {
+    if (!appName || busy) return;
+    clearCached(pipeline.connector_id);
+    setCachedTs(null);
+    setSurfaces([]);
+    setTurns([]);
+    setFollowups(DEFAULT_FOLLOWUPS);
+    execute(appName, KICKOFF, false, { kickoff: true });
+  }
 
   useEffect(() => {
     chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight });
@@ -125,7 +161,22 @@ export function Workspace({ pipeline }: { pipeline: Pipeline }) {
       <section className="canvas">
         <div className="canvas-head">
           <h2>{pipeline.schema ?? pipeline.connector_id} · dashboard</h2>
-          {busy && <span className="canvas-busy">updating…</span>}
+          <div className="canvas-meta">
+            {cachedTs && !busy && (
+              <span className="canvas-cached">
+                cached {cacheAgeLabel(cachedTs)}
+              </span>
+            )}
+            {busy && <span className="canvas-busy">updating…</span>}
+            <button
+              className="canvas-refresh"
+              onClick={refresh}
+              disabled={busy || !appName}
+              title="Re-compose the dashboard from the live agent"
+            >
+              Refresh
+            </button>
+          </div>
         </div>
         {surfaces.length === 0 ? (
           <div className="canvas-empty">

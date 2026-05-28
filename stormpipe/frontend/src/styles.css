@@ -280,6 +280,19 @@ body {
   border-bottom: 1px solid var(--border);
 }
 .canvas-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.canvas-meta { display: flex; align-items: center; gap: 10px; }
+.canvas-cached { color: var(--muted); font-size: 12px; }
+.canvas-refresh {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 5px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.canvas-refresh:hover { color: var(--text); border-color: var(--accent); }
+.canvas-refresh:disabled { opacity: 0.5; cursor: not-allowed; }
 .canvas-busy { color: var(--muted); font-size: 12px; font-style: italic; }
 .canvas-empty { color: var(--muted); padding: 48px 20px; text-align: center; }
 .canvas-grid {
