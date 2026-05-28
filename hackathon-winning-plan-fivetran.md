@@ -39,7 +39,7 @@ GHCN `by_year` CSVs are **headerless**, but the Fivetran S3 connector `personifi
 | FR-05 Quarantine table | ⚠️ Partial | `_quarantine` + `_audit_log` DDL created, not yet populated. Q_FLAG-based quarantine **blocked by misparse** (Q_FLAG lost) → needs source re-sync. |
 | FR-06 NL operator summary | ✅ Done | `format_pipeline_summary` + orchestrator prose; verified live. |
 | FR-07 Memory Bank persistence | ❌ Not started | |
-| FR-08 Operator chat interface | ✅ Done (local) | React+A2UI SPA in `frontend/` against local `adk api_server`; emits/renders A2UI v0.9. Hosted (Firebase) deploy deferred to Phase B. |
+| FR-08 Operator chat interface | ✅ Done & deployed | Generic Fivetran-connector picker + split workspace (chat left, agent-composed A2UI dashboard canvas right) + per-turn rotating follow-up chips + 10 min localStorage cache for the kickoff (warm hydrate ~2-3s vs ~190s cold). SPA mounted as StaticFiles in the same Cloud Run service (`web=False` on get_fast_api_app, Dockerfile COPYs `frontend/dist`). Single public URL: https://stormpipe-mued7ds4ba-uc.a.run.app. See §0.6. |
 | FR-09 Observability (Trace/Logging) | ❌ Not started | No infra provisioned. |
 
 **Bonus built (not in original plan):** Fivetran source-self-heal capability — `app/tools/fivetran_tool.py` (`fivetran_connector_status`, `fivetran_diagnose_csv_parsing`, `fivetran_fix_csv_header_config(confirm)`, `fivetran_resync(confirm)`), wired into `pipeline_controller`. Diagnoses `empty_header=false` root cause and can patch+resync to recover lost columns. Mutations gated behind `confirm=True`.
@@ -92,6 +92,33 @@ hero-bug demo intact). Eval (T11) is ✅ 6/6, observability code (T3b) is ✅ wi
 **Deferred / do-not-run:** source re-sync (T1) + `_quarantine` populate (FR-05) — would
 destroy the hero-bug demo. Only consider *after* the video is recorded, if at all; the
 `_observations_misparsed_snapshot` already preserves the broken state regardless.
+
+### 0.6 Post-Phase-B enhancements (2026-05-27 → 2026-05-28)
+
+Hardened UI for judging + a single shareable URL. All shipped, all live at rev `stormpipe-00012-dmp`.
+
+| ID | Change | State |
+|----|--------|-------|
+| R1 | Generic Fivetran pipeline picker (UI not hardcoded to GHCN) | ✅ live |
+| R2 | Split dashboard-canvas: chat (left) + A2UI surfaces (right), fold-by-surfaceId so re-emits update panels in place | ✅ live |
+| R3 | Agent-emitted per-turn `<followups>` block → chat chips rotate to next-best questions every turn | ✅ live |
+| R4 | SPA served from the same Cloud Run service (single URL, no CORS) | ✅ live |
+| R5 | localStorage dashboard cache, 10 min TTL, with age pill + Refresh button | ✅ live |
+
+**R1 — generic picker.** New `fivetran_list_connectors()` (Fivetran `GET /v1/groups/{group_id}/connections`) registered on `pipeline_controller`. All Fivetran tools now take optional `connector_id` (default = module `CONNECTOR_ID`). New `GET /pipelines` route in `app/fast_api_app.py` calls the lister server-side with a static GHCN fallback when creds are absent (so the picker always renders). Frontend: new `PipelineList.tsx` (selectable connector cards), `App.tsx` is a tiny router. Orchestrator instruction scoped via optional template var `{selected_connector_id?}` (ADK supports `{var?}` so eval doesn't 500 on the missing var). Cloud `/pipelines` now returns two real connectors → genericity is non-fake.
+
+**R2 — dashboard-canvas.** New `Workspace.tsx` = split layout. On pipeline select: createSession with state `{selected_connector_id, selected_connector_name}` → auto-fires a kickoff message → orchestrator composes three canonical surfaces with stable `surfaceId`s `pipeline-health` / `schema-detail` / `dq-status` (declared in `app/a2ui_setup.py` `_UI_DESCRIPTION`). `mergeSurfaces` in the workspace folds by id so a follow-up re-emitting the same id updates that panel in place; new ad-hoc concerns get a new id and append. Chat carries only the agent's text reply; all A2UI surfaces land in the canvas.
+
+**R3 — rotating chips.** Agent emits a `<followups>["q1","q2","q3"]</followups>` block alongside its `<a2ui-json>` blocks; `frontend/src/a2ui/parse.ts` extracts and strips it. `Workspace` keeps a `followups` state, defaults to three "next-step" questions (source-fix plan, elements w/ most quality flags, what only re-sync can recover) — explicitly NOT the three dashboard topics. Agent replaces the chips per turn; malformed/missing block leaves the last good set in place.
+
+**R4 — SPA on Cloud Run.** Mount `frontend/dist` as FastAPI `StaticFiles` at `/` in `fast_api_app.py` AFTER the API routes (so `/run`, `/apps/...`, `/list-apps`, `/pipelines`, `/feedback` still win). Required `get_fast_api_app(..., web=False)` because ADK's built-in dev UI registers at `/` and 307-redirects to `/dev-ui/`. Dockerfile got `COPY ./frontend/dist ./frontend/dist`; `.gcloudignore` narrowed from "ignore all of `frontend/`" to ignore only sources / node_modules so the built dist ships. Build step before deploy: `cd frontend && npm run build`.
+
+**R4.b — defense-in-depth for BQ errors.** During cloud E2E the model reliably hallucinated `SELECT * FROM noaa_ghcn._audit_log ORDER BY timestamp DESC LIMIT 10` (real column is `EXECUTED_AT`). Raw BQ exceptions in `bigquery_run_query` were killing the whole `/run` with a 500. Now the tool catches `BadRequest/NotFound/Forbidden` and returns `{"error", "sql", "hint": "Call bigquery_get_schema(...) before retrying."}` so the model sees the failure as data and self-corrects. Plus the orchestrator instruction now cites known column names (`_audit_log.EXECUTED_AT`, `observations_clean` cols).
+
+**R5 — localStorage cache, 10 min TTL.** Cold kickoff was ~90-190s. Backend in-process cache would lose warmth on Cloud Run's scale-to-zero, so cache lives in the browser: `frontend/src/cache.ts` keyed by `connector_id` with payload `{ts, text, surfaces, followups}`. On Workspace mount, after `createSession`, a fresh entry hydrates state and the kickoff is skipped entirely (session still created so chat works). Only the kickoff turn writes the cache (`opts.kickoff` flag) so follow-up turns can't poison it. Canvas head shows a `cached 12s ago` age pill and a `Refresh` button (busts cache + re-runs). Round-trip (pipeline → back to picker → re-enter same pipeline) still hits cache because the key is the connector, not the sessionId. **Measured:** warm hydrate ~2-3s vs ~190s cold → ~60-85× speedup.
+
+**Rev history under R4/R5 (all on Cloud Run service `stormpipe`, region us-central1):**
+00006 (R1+R2 backend, frontend still local) → 00007 (`web=False` set, but Dockerfile didn't COPY dist → `/` 404) → 00008 (Dockerfile fixed, UI live, BQ `timestamp` hallucination → 500) → 00009 (prompt fix on dq_remediator only — still 500, orchestrator was the offender) → 00010 (BQ tool returns errors as data → ✅ panels compose) → 00011 (rotating follow-up chips) → **00012** (localStorage cache). `allUsers` invoker re-granted after every deploy (the deploy wipes it).
 
 ***
 
