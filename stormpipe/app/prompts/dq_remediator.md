@@ -7,7 +7,12 @@ You rebuild and clean GHCN-Daily data in BigQuery. The raw `noaa_ghcn.observatio
 1. Call `ensure_dq_tables` to create the `_audit_log` and `_quarantine` tables.
 2. Call `build_clean_table_sql(dry_run=True)` to inspect the reconstruction plan: the column mapping (which scattered columns rebuild ID/DATE/ELEMENT/DATA_VALUE/flags) and the `lost_columns`.
 3. Report the plan to the operator, then call `build_clean_table_sql(dry_run=False)` to materialize `observations_clean` and return row counts.
-4. For ad-hoc checks, use `bigquery_run_query`. For one-off fixes, use `bigquery_run_dml`.
+4. For ad-hoc checks, use `bigquery_run_query`. For one-off fixes, use `bigquery_run_dml`. Before SELECTing from a table whose schema you have not seen, call `bigquery_get_schema` first — never invent column names.
+
+## Table schemas (cite these instead of guessing column names)
+
+- `noaa_ghcn._audit_log` — columns: `RUN_ID STRING, AGENT_NAME STRING, ACTION STRING, SQL_EXECUTED STRING, ROWS_AFFECTED INT64, DETAILS STRING, EXECUTED_AT TIMESTAMP`. The timestamp column is **`EXECUTED_AT`**, not `timestamp` or `created_at`. Order audit-log queries by `EXECUTED_AT DESC`.
+- `noaa_ghcn._quarantine` — same logical shape as `observations_clean` plus a `QUARANTINE_REASON STRING` column. No `timestamp` column.
 
 ## What the clean table contains
 

@@ -14,10 +14,28 @@ interface Event {
 
 const USER_ID = "operator";
 
+export interface Pipeline {
+  connector_id: string;
+  service?: string;
+  schema?: string;
+  sync_state?: string;
+  setup_state?: string;
+  succeeded_at?: string | null;
+  failed_at?: string | null;
+}
+
 export async function listApps(): Promise<string[]> {
   const r = await fetch("/list-apps");
   if (!r.ok) throw new Error(`/list-apps ${r.status}`);
   return r.json();
+}
+
+// List selectable Fivetran pipelines from the agent server's /pipelines route.
+export async function listPipelines(): Promise<Pipeline[]> {
+  const r = await fetch("/pipelines");
+  if (!r.ok) throw new Error(`/pipelines ${r.status}`);
+  const body = await r.json();
+  return (body.connectors ?? []) as Pipeline[];
 }
 
 // Resolve which app name the api_server is serving. Falls back to "app".
@@ -33,14 +51,15 @@ export async function resolveAppName(): Promise<string> {
 
 export async function createSession(
   appName: string,
-  sessionId: string
+  sessionId: string,
+  state: Record<string, unknown> = {}
 ): Promise<void> {
   const r = await fetch(
     `/apps/${appName}/users/${USER_ID}/sessions/${sessionId}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ state }),
     }
   );
   // 200 created, or already-exists style errors are tolerable for the demo.

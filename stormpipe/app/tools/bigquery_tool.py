@@ -1,5 +1,6 @@
 import os
 
+from google.api_core import exceptions as gax
 from google.cloud import bigquery
 
 PROJECT = os.environ.get("GOOGLE_CLOUD_PROJECT", "stormpipe-hackathon")
@@ -15,17 +16,32 @@ def _bq() -> bigquery.Client:
     return _client
 
 
-def bigquery_run_query(sql: str) -> list[dict]:
+def bigquery_run_query(sql: str) -> list[dict] | dict:
     """Execute a BigQuery SQL query and return results as a list of dicts.
 
     Args:
         sql: Standard SQL query string.
 
     Returns:
-        List of row dicts. Max 1000 rows.
+        List of row dicts (max 1000), OR a single-element error dict
+        ``{"error": str, "sql": str, "hint": str}`` if BigQuery rejects the
+        query. Returning the error rather than raising lets the model see the
+        failure and self-correct (e.g. call ``bigquery_get_schema`` first)
+        instead of killing the whole agent turn with a 500.
     """
-    job = _bq().query(sql)
-    rows = list(job.result())
+    try:
+        job = _bq().query(sql)
+        rows = list(job.result())
+    except (gax.BadRequest, gax.NotFound, gax.Forbidden) as e:
+        return {
+            "error": str(e)[:500],
+            "sql": sql,
+            "hint": (
+                "Query was rejected by BigQuery. Do not retry the same SQL. "
+                "Call bigquery_get_schema(dataset, table) to see exact column "
+                "names, then re-run the query with the corrected identifiers."
+            ),
+        }
     return [dict(r) for r in rows[:1000]]
 
 

@@ -7,6 +7,7 @@ from app.tools.fivetran_tool import (
     fivetran_connector_status,
     fivetran_diagnose_csv_parsing,
     fivetran_fix_csv_header_config,
+    fivetran_list_connectors,
     fivetran_resync,
 )
 
@@ -21,6 +22,7 @@ pipeline_controller_agent = Agent(
     ),
     instruction=open("app/prompts/pipeline_controller.md").read(),
     tools=[
+        fivetran_list_connectors,
         fivetran_connector_status,
         fivetran_diagnose_csv_parsing,
         fivetran_fix_csv_header_config,

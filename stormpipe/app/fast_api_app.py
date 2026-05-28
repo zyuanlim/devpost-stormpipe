@@ -16,6 +16,7 @@ import os
 
 import google.auth
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from google.adk.cli.fast_api import get_fast_api_app
 from google.cloud import logging as google_cloud_logging
 
@@ -63,7 +64,9 @@ otel_to_cloud = os.environ.get("OTEL_TO_CLOUD", "").lower() in ("1", "true", "ye
 
 app: FastAPI = get_fast_api_app(
     agents_dir=AGENT_DIR,
-    web=True,
+    # web=False: ADK's built-in dev UI is replaced by our StaticFiles mount
+    # below (frontend/dist), which owns "/" instead of redirecting to /dev-ui.
+    web=False,
     artifact_service_uri=artifact_service_uri,
     allow_origins=allow_origins,
     session_service_uri=session_service_uri,
@@ -72,6 +75,42 @@ app: FastAPI = get_fast_api_app(
 )
 app.title = "stormpipe"
 app.description = "API for interacting with the Agent stormpipe"
+
+
+@app.get("/pipelines")
+def list_pipelines() -> dict:
+    """List selectable Fivetran pipelines (connectors) for the UI landing view.
+
+    Calls Fivetran server-side (no LLM) for a fast, deterministic list. If the
+    Fivetran call fails — e.g. running locally with dummy credentials — falls back
+    to the known GHCN connector so the selector still renders.
+    """
+    from app.tools.fivetran_tool import CONNECTOR_ID, fivetran_list_connectors
+
+    try:
+        result = fivetran_list_connectors()
+        connectors = result.get("connectors") or []
+        if connectors:
+            return {"connectors": connectors, "source": "fivetran"}
+        error = result.get("error")
+    except Exception as e:  # noqa: BLE001 — never 500 the landing page
+        error = {"message": str(e)[:300]}
+
+    return {
+        "connectors": [
+            {
+                "connector_id": CONNECTOR_ID,
+                "service": "s3",
+                "schema": "noaa_ghcn",
+                "sync_state": "synced",
+                "setup_state": "connected",
+                "succeeded_at": None,
+                "failed_at": None,
+            }
+        ],
+        "source": "fallback",
+        "error": error,
+    }
 
 
 @app.post("/feedback")
@@ -86,6 +125,15 @@ def collect_feedback(feedback: Feedback) -> dict[str, str]:
     """
     logger.log_struct(feedback.model_dump(), severity="INFO")
     return {"status": "success"}
+
+
+# Serve the built React SPA from frontend/dist at the root. Mounted AFTER the
+# API routes (/run, /apps/..., /list-apps, /pipelines, /feedback) so explicit
+# routes win; StaticFiles only catches unmatched paths. html=True serves
+# index.html for the "/" request and resolves named asset paths under /assets.
+_DIST_DIR = os.path.join(AGENT_DIR, "frontend", "dist")
+if os.path.isdir(_DIST_DIR):
+    app.mount("/", StaticFiles(directory=_DIST_DIR, html=True), name="ui")
 
 
 # Main execution

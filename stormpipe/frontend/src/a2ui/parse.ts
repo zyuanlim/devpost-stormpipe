@@ -1,11 +1,33 @@
 import type { A2uiMessage, Surface } from "./types";
 
 const BLOCK_RE = /<a2ui-json>([\s\S]*?)<\/a2ui-json>/g;
+const FOLLOWUPS_RE = /<followups>([\s\S]*?)<\/followups>/g;
 
 export interface ParsedResponse {
-  // Conversational text outside the A2UI blocks.
+  // Conversational text outside the A2UI / followups blocks.
   text: string;
   surfaces: Surface[];
+  // Next-best follow-up questions the agent suggests for the operator. Empty
+  // when the model didn't emit a followups block.
+  followups: string[];
+}
+
+function extractFollowups(raw: string): { followups: string[]; stripped: string } {
+  const followups: string[] = [];
+  let stripped = raw;
+  FOLLOWUPS_RE.lastIndex = 0;
+  stripped = stripped.replace(FOLLOWUPS_RE, (_full, body: string) => {
+    try {
+      const arr = JSON.parse(body.trim());
+      if (Array.isArray(arr)) {
+        for (const q of arr) if (typeof q === "string" && q.trim()) followups.push(q.trim());
+      }
+    } catch {
+      /* malformed → ignore, defaults stay */
+    }
+    return "";
+  });
+  return { followups, stripped };
 }
 
 // A single <a2ui-json> block may contain one JSON object, several concatenated
@@ -107,18 +129,21 @@ function foldSurfaces(rawMessages: A2uiMessage[]): Surface[] {
 }
 
 export function parseA2ui(responseText: string): ParsedResponse {
+  // Pull followups first so they never leak into the chat text.
+  const { followups, stripped } = extractFollowups(responseText);
+
   const messages: A2uiMessage[] = [];
   let text = "";
   let lastEnd = 0;
 
   BLOCK_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
-  while ((m = BLOCK_RE.exec(responseText)) !== null) {
-    text += responseText.slice(lastEnd, m.index);
+  while ((m = BLOCK_RE.exec(stripped)) !== null) {
+    text += stripped.slice(lastEnd, m.index);
     messages.push(...extractJsonObjects(m[1]));
     lastEnd = BLOCK_RE.lastIndex;
   }
-  text += responseText.slice(lastEnd);
+  text += stripped.slice(lastEnd);
 
-  return { text: text.trim(), surfaces: foldSurfaces(messages) };
+  return { text: text.trim(), surfaces: foldSurfaces(messages), followups };
 }

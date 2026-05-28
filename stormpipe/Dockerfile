@@ -21,6 +21,9 @@ WORKDIR /code
 COPY ./pyproject.toml ./README.md ./uv.lock* ./
 
 COPY ./app ./app
+# Built React SPA served by app/fast_api_app.py as StaticFiles at "/". Run
+# `cd frontend && npm run build` locally before `gcloud run deploy`.
+COPY ./frontend/dist ./frontend/dist
 
 RUN uv sync --frozen
 

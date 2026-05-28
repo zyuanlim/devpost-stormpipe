@@ -20,6 +20,7 @@ export default defineConfig({
       "/run_sse": { target: ADK_URL, changeOrigin: true },
       "/apps": { target: ADK_URL, changeOrigin: true },
       "/list-apps": { target: ADK_URL, changeOrigin: true },
+      "/pipelines": { target: ADK_URL, changeOrigin: true },
     },
   },
 });

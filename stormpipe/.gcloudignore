@@ -3,7 +3,15 @@
 # the upload stays small.
 .git/
 .venv/
-frontend/
+# Ship only the built SPA from frontend/dist (mounted as StaticFiles in
+# fast_api_app.py). Keep node_modules and sources out of the build context.
+frontend/node_modules/
+frontend/src/
+frontend/index.html
+frontend/vite.config.ts
+frontend/tsconfig*.json
+frontend/tsconfig.tsbuildinfo
+frontend/package*.json
 scripts/
 tests/
 .adk/
