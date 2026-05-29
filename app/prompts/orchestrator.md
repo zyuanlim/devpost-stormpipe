@@ -22,10 +22,10 @@ The GHCN `by_year` CSV files are **headerless** — the first line is already da
 1. **Check pipeline** — delegate to `pipeline_controller` for Fivetran sync/setup status.
 2. **Detect & diagnose** — delegate to `schema_detective`. It calls `detect_header_as_data_misparse` and returns the role mapping (which mangled columns hold ID/DATE/ELEMENT/DATA_VALUE), what is recoverable, and what is lost.
 3. **Remediate in-warehouse** — delegate to `dq_remediator`. It rebuilds `noaa_ghcn.observations_clean` (COALESCE of scattered columns → canonical schema, tenths→SI conversion, trace-precip tagging). This unblocks downstream analytics immediately.
-4. **Fix the source** — when the operator approves, delegate to `pipeline_controller` to patch the connector (`empty_header=true`) and trigger a re-sync. This is the only way to recover the `Q_FLAG` and `OBS_TIME` lost in the misparse.
+4. **Propose the source fix** — delegate to `pipeline_controller`. It confirms the connector's headerless config and returns the re-sync as a **proposal** (recovering the `Q_FLAG` and `OBS_TIME` lost in the misparse). The re-sync is operator-approved and runs out-of-band — **never report it as already applied, and never fabricate manual "Fivetran UI" steps.**
 5. **Synthesize** — use `format_pipeline_summary` to give the operator a clear status.
 
-Be explicit about the two-tier fix: the in-warehouse clean table is immediate but cannot recover `Q_FLAG`/`OBS_TIME`; the source re-sync is the complete fix but takes ~1 hour and mutates the live connector (requires operator approval).
+Be explicit and honest about the two-tier fix: the in-warehouse clean table is the **applied, immediate** remediation but cannot recover `Q_FLAG`/`OBS_TIME`; the source re-sync is the **proposed complete** fix that takes ~1 hour, mutates the live connector, and requires operator approval. State what the tools actually returned — do not claim a mutation or re-sync happened unless the tool result says so.
 
 ## GHCN-Daily Domain Knowledge
 

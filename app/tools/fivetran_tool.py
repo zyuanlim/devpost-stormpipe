@@ -179,9 +179,30 @@ def fivetran_fix_csv_header_config(confirm: bool = False, connector_id: str = ""
 
     Returns:
         Dict with the patch applied (or planned) and the resulting empty_header value.
+        If the connector is already headerless, reports ``already_correct`` rather
+        than pretending a fix was made.
     """
     connector_id = connector_id or CONNECTOR_ID
     patch = {"config": {"empty_header": True}}
+
+    # Honesty guard: if the connector is already in headerless mode, applying the
+    # patch changes nothing — say so plainly instead of reporting a fix that did
+    # not happen. (The mangled data can still persist if no re-sync has run.)
+    current = _api("GET", f"/connections/{connector_id}")
+    if "error" not in current:
+        empty_header = current.get("data", {}).get("config", {}).get("empty_header")
+        if empty_header is True or empty_header == "true":
+            return {
+                "applied": False,
+                "already_correct": True,
+                "empty_header": True,
+                "note": (
+                    "Connector is already in headerless mode (empty_header=true); no "
+                    "config change is needed. The mangled data persists only because "
+                    "no re-sync has re-ingested the files with the corrected parsing."
+                ),
+            }
+
     if not confirm:
         return {"applied": False, "planned_patch": patch, "note": "Re-call with confirm=True to apply."}
     resp = _api("PATCH", f"/connections/{connector_id}", patch)
@@ -196,27 +217,72 @@ def fivetran_fix_csv_header_config(confirm: bool = False, connector_id: str = ""
     }
 
 
-def fivetran_resync(confirm: bool = False, connector_id: str = "") -> dict:
-    """Trigger a full historical re-sync of the connector.
+def _resync_execution_enabled() -> bool:
+    """Whether the tool may actually fire a live re-sync.
 
-    Use after fixing the CSV header config so the corrected parsing is applied to all
-    data. A full re-sync of the GHCN by_year files takes roughly an hour.
+    OFF by default. A real historical re-sync re-ingests all ~187M GHCN rows with
+    the corrected headerless parsing — which UN-MANGLES the data and takes ~1
+    hour. That is irreversible and would erase the intentionally-preserved
+    misparse. So the tool returns the re-sync as a *proposal* for the operator to
+    approve out-of-band, unless ``FIVETRAN_RESYNC_ENABLED`` is explicitly set.
+    """
+    return os.environ.get("FIVETRAN_RESYNC_ENABLED", "").lower() in ("1", "true", "yes")
+
+
+def fivetran_resync(confirm: bool = False, connector_id: str = "") -> dict:
+    """Propose (or, if enabled, trigger) a full historical re-sync of the connector.
+
+    Use after the CSV header config is correct so the fixed parsing is applied to
+    all data. A full re-sync of the GHCN by_year files takes roughly an hour and
+    recovers the Q_FLAG / OBS_TIME columns the misparse destroyed.
+
+    Execution is gated behind ``FIVETRAN_RESYNC_ENABLED`` (see
+    ``_resync_execution_enabled``). When disabled, this returns the re-sync as a
+    proposal — it does NOT run, and the caller must NOT claim it ran.
 
     Args:
-        confirm: Must be True to actually trigger the re-sync. If False, returns the plan.
+        confirm: Must be True to trigger the re-sync (only honored when execution
+            is enabled). If False, returns the plan.
         connector_id: Which connector to re-sync. Defaults to the configured GHCN
             connector when empty.
 
     Returns:
-        Dict describing the triggered (or planned) re-sync.
+        Dict describing the proposed / planned / triggered re-sync.
     """
     connector_id = connector_id or CONNECTOR_ID
+    # Resync scope is a {schema: [tables]} map; the array must be non-empty. GHCN
+    # lands in schema `noaa_ghcn`, table `observations`.
+    scope = {"noaa_ghcn": ["observations"]}
+    plan = {
+        "action": "full_historical_resync",
+        "connector_id": connector_id,
+        "scope": scope,
+        "duration_estimate": "~1 hour",
+        "recovers": "All 8 GHCN columns, including the Q_FLAG and OBS_TIME lost in the misparse.",
+        "irreversible": True,
+    }
+
+    if not _resync_execution_enabled():
+        return {
+            "triggered": False,
+            "status": "proposed",
+            "plan": plan,
+            "note": (
+                "This is a PROPOSED source fix that requires operator approval and is "
+                "executed out-of-band — re-sync execution is disabled here. Present the "
+                "plan; do NOT claim the re-sync ran and do NOT emit manual UI steps. The "
+                "immediate, applied remediation is the in-warehouse observations_clean rebuild."
+            ),
+        }
+
     if not confirm:
         return {
             "triggered": False,
-            "note": "Re-call with confirm=True to trigger a full historical re-sync (~1 hour).",
+            "status": "planned",
+            "plan": plan,
+            "note": "Re-call with confirm=True to trigger the full historical re-sync (~1 hour).",
         }
-    resp = _api("POST", f"/connections/{connector_id}/resync", {"scope": {"observations": []}})
+    resp = _api("POST", f"/connections/{connector_id}/resync", {"scope": scope})
     if "error" in resp:
         return {"triggered": False, "error": resp["error"]}
     return {
