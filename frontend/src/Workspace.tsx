@@ -36,16 +36,6 @@ const KICKOFF =
   "schema drift / misparse, and data-quality status. Keep your text reply to a " +
   "one-line greeting — put the detail in the dashboard surfaces.";
 
-// Deterministic fix / reparse action wired to a fixed canvas button so it is
-// ALWAYS present on first load — not dependent on the model emitting a fix
-// button inside the composed dashboard. Phrasing matches the orchestrator's
-// "proceed/fix" routing: execute the in-warehouse rebuild now, then surface the
-// source re-sync proposal for the fields only a re-sync can recover.
-const FIX_PROMPT =
-  "Fix it now: reparse the misparsed GHCN data — rebuild " +
-  "noaa_ghcn.observations_clean in BigQuery and apply it, then show the source " +
-  "re-sync proposal for the Q_FLAG / OBS_TIME fields only a re-sync can recover.";
-
 function mergeSurfaces(prev: Surface[], incoming: Surface[]): Surface[] {
   const map = new Map(prev.map((s) => [s.surfaceId, s]));
   const order = prev.map((s) => s.surfaceId);
@@ -223,14 +213,6 @@ export function Workspace({ pipeline }: { pipeline: Pipeline }) {
               </span>
             )}
             {busy && <span className="canvas-busy">updating…</span>}
-            <button
-              className="canvas-fix"
-              onClick={() => send(FIX_PROMPT)}
-              disabled={busy || !appName}
-              title="Reparse the misparsed data and rebuild observations_clean now"
-            >
-              Fix &amp; reparse
-            </button>
             <button
               className="canvas-refresh"
               onClick={refresh}

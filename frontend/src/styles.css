@@ -232,9 +232,21 @@ body {
   border-radius: 9px;
   cursor: pointer;
   font-size: 14px;
+  font-weight: 500;
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s, background 0.15s;
 }
-.a2-button-primary { background: var(--accent); color: #04101f; border-color: var(--accent); font-weight: 600; }
+.a2-button:hover { border-color: var(--accent); transform: translateY(-1px); background: var(--panel-2); }
+.a2-button:active { transform: translateY(0); }
+.a2-button-primary {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #04101f;
+  border-color: transparent;
+  font-weight: 700;
+  box-shadow: var(--shadow);
+}
+.a2-button-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(91, 157, 255, 0.4); background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
 .a2-button-borderless { background: transparent; border-color: transparent; color: var(--accent); }
+.a2-button-borderless:hover { background: rgba(91, 157, 255, 0.1); transform: none; }
 .a2-unknown { color: var(--err); font-size: 12px; font-style: italic; }
 .a2-md-list { margin: 4px 0; padding-left: 18px; }
 .a2-md-list li { margin: 2px 0; }
@@ -382,21 +394,6 @@ body {
 }
 .canvas-refresh:hover { color: var(--text); border-color: var(--accent); background: var(--panel); }
 .canvas-refresh:disabled { opacity: 0.5; cursor: not-allowed; }
-/* Deterministic primary action — always present on first canvas load. */
-.canvas-fix {
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  border: 1px solid transparent;
-  color: #04101f;
-  padding: 6px 14px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 700;
-  box-shadow: var(--shadow);
-  transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
-}
-.canvas-fix:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(91, 157, 255, 0.4); }
-.canvas-fix:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
 .canvas-busy { color: var(--accent); font-size: 12px; font-style: italic; }
 .canvas-empty { color: var(--muted); padding: 64px 20px; text-align: center; font-size: 14px; }
 .canvas-grid {

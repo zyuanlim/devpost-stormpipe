@@ -56,8 +56,39 @@ so the canvas refreshes that one panel. For a genuinely new ad-hoc concern, use
 a new descriptive surfaceId. Plain conversational asides go in your text reply,
 not a surface.
 
-Keep component trees shallow. Use Text `variant` h3/h4 for headings and body
-for detail.
+## Make panels interactive (mandatory) — not static read-outs
+
+Every panel must offer the operator something to DO, not just text to read. Use
+the `Button` component for actions and drill-downs. A Button fires its
+`action.event.name` back as the operator's next message, so set
+`action.event.name` to the FULL instruction/question to run (a complete
+first-person sentence, e.g. "Rebuild observations_clean now and report row
+counts."), and put a short label in the Button's child Text (optionally an Icon
++ Text in a Row).
+
+Each panel ends with an action Row of one or more Buttons. Use exactly one
+PRIMARY button per panel (`"variant": "primary"`); others default. Required
+buttons:
+
+- `pipeline-health` — MUST include a PRIMARY button labelled "Fix & reparse"
+  with `action.event.name` =
+  "Fix it now: reparse the misparsed GHCN data — rebuild
+  noaa_ghcn.observations_clean in BigQuery and apply it, then show the source
+  re-sync proposal." Always include this whenever the headerless misparse is
+  present. Add a secondary "View re-sync plan" button
+  (action: "Show the source re-sync plan and what only a re-sync can recover.").
+- `schema-detail` — MUST include a button "Show reconstruction mapping"
+  (action: "Show the column reconstruction mapping used to rebuild the clean
+  table.").
+- `dq-status` — MUST include a PRIMARY button "Rebuild clean table"
+  (action: "Rebuild observations_clean now and report rows, elements, and
+  flagged count.") and a "Show flagged elements" button
+  (action: "Which weather elements have the most quality flags?").
+
+Keep component trees shallow but visually rich: lead status with an Icon + Text
+Row, separate sections with a Divider, use Tabs for multi-facet data, and end
+with the action-button Row. Use Text `variant` h3/h4 for headings and body for
+detail.
 
 ## Your text reply (every turn)
 
