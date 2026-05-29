@@ -3,7 +3,14 @@
 **An agentic pipeline-health operator for Fivetran + BigQuery — it finds the data-quality disasters your sync silently created, reconstructs the clean data with SQL, and proposes the source fix.**
 
 > Google Cloud Rapid Agent Hackathon · Fivetran track
-> Live demo: **https://stormpipe-mued7ds4ba-uc.a.run.app**
+
+## ▶ Try it now — no install, no deploy
+
+### **[👉 stormpipe-mued7ds4ba-uc.a.run.app](https://stormpipe-mued7ds4ba-uc.a.run.app)**
+
+It's already live on Cloud Run against the **real** 186.9M-row pipeline. Open the link, pick a connector, and watch the agent compose the health dashboard from live BigQuery + Fivetran state — nothing to clone, configure, or run. (Cold start scales from zero, so the first compose takes ~90s; re-opens are near-instant.)
+
+![StormPipe dashboard — chat on the left, agent-composed pipeline-health / schema-drift / data-quality panels on the right](docs/demo.png)
 
 StormPipe ingests NOAA's GHCN-Daily climate archive (**186.9M rows**) through a real Fivetran S3 connector into BigQuery, then puts a multi-agent ADK system in front of it. Ask it about a pipeline and it doesn't just chat — it **composes a live dashboard**: pipeline health, schema drift, and data-quality status, each panel built by a specialist sub-agent and updated in place as you drill in.
 
