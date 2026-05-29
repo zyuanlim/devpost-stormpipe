@@ -93,6 +93,76 @@ function normalize(raw: unknown): A2uiMessage {
   return obj as A2uiMessage;
 }
 
+// An A2UI message carries at least one of these top-level keys (after
+// unwrapping a `{"v0.9": {...}}` envelope). Used to recognize A2UI JSON that
+// the model emitted WITHOUT the <a2ui-json> tags — e.g. in a ```json fence or
+// bare — so it still renders on the canvas instead of leaking into the chat.
+const A2UI_KEYS = ["updateComponents", "createSurface", "updateDataModel"];
+
+function looksLikeA2ui(obj: unknown): boolean {
+  const n = normalize(obj) as Record<string, unknown>;
+  return !!n && typeof n === "object" && A2UI_KEYS.some((k) => k in n);
+}
+
+// Brace-scan a string for every top-level {...} object, returning each parsed
+// object with its [start, end) span so callers can excise it from the text.
+function scanJsonObjects(s: string): { obj: unknown; start: number; end: number }[] {
+  const out: { obj: unknown; start: number; end: number }[] = [];
+  let depth = 0;
+  let start = -1;
+  let inStr = false;
+  let esc = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === "{") {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === "}") {
+      if (depth > 0) {
+        depth--;
+        if (depth === 0 && start >= 0) {
+          try {
+            out.push({ obj: JSON.parse(s.slice(start, i + 1)), start, end: i + 1 });
+          } catch {
+            /* not valid JSON — skip */
+          }
+          start = -1;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// Recover A2UI messages the model emitted without <a2ui-json> tags. Any
+// top-level JSON object that looks like an A2UI message is pulled out of the
+// chat text and routed to the canvas; non-A2UI JSON (e.g. a Fivetran config
+// patch the operator should see) is left in the text untouched.
+function recoverUntaggedA2ui(text: string): { messages: A2uiMessage[]; text: string } {
+  const messages: A2uiMessage[] = [];
+  const spans = scanJsonObjects(text).filter((o) => looksLikeA2ui(o.obj));
+  if (!spans.length) return { messages, text };
+  for (const { obj } of spans) messages.push(obj as A2uiMessage);
+  // Excise spans right-to-left so earlier indices stay valid.
+  let out = text;
+  for (let i = spans.length - 1; i >= 0; i--) {
+    out = out.slice(0, spans[i].start) + out.slice(spans[i].end);
+  }
+  // Clean up now-empty code fences and the leftover blank lines they leave.
+  out = out
+    .replace(/```[a-zA-Z]*\s*```/g, "")
+    .replace(/```[a-zA-Z]*\s*$/gm, "")
+    .replace(/\n{3,}/g, "\n\n");
+  return { messages, text: out };
+}
+
 function foldSurfaces(rawMessages: A2uiMessage[]): Surface[] {
   const messages = rawMessages.map(normalize);
   const order: string[] = [];
@@ -145,5 +215,11 @@ export function parseA2ui(responseText: string): ParsedResponse {
   }
   text += stripped.slice(lastEnd);
 
-  return { text: text.trim(), surfaces: foldSurfaces(messages), followups };
+  // Belt-and-suspenders: if the model emitted A2UI JSON without the
+  // <a2ui-json> tags (fenced or bare), recover it from the chat text so it
+  // renders on the canvas instead of leaking into the conversation.
+  const recovered = recoverUntaggedA2ui(text);
+  messages.push(...recovered.messages);
+
+  return { text: recovered.text.trim(), surfaces: foldSurfaces(messages), followups };
 }
