@@ -113,6 +113,16 @@ body {
 }
 .msg-text { white-space: pre-wrap; }
 .spinner { color: var(--muted); font-style: italic; }
+.msg-thought {
+  white-space: pre-wrap;
+  color: var(--muted);
+  font-style: italic;
+  font-size: 0.85em;
+  border-left: 2px solid var(--border, #333);
+  padding-left: 8px;
+  margin-bottom: 6px;
+  opacity: 0.8;
+}
 
 .surface { margin-top: 10px; }
 

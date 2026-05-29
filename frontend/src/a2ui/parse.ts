@@ -198,6 +198,21 @@ function foldSurfaces(rawMessages: A2uiMessage[]): Surface[] {
   return order.map((id) => byId[id]).filter((s) => s.rootId !== null);
 }
 
+// Cheap, allocation-light strip for the LIVE streaming preview: show only the
+// conversational text that precedes any A2UI / followups payload. The model is
+// prompted to lead with its one-line reply and put the dashboard JSON after, so
+// cutting at the first block boundary keeps half-streamed JSON out of the chat
+// without trying to parse incomplete objects. parseA2ui does the real cleanup
+// once the full turn has arrived.
+export function liveChatText(raw: string): string {
+  let end = raw.length;
+  for (const marker of ["<a2ui-json>", "<followups>", "```json", "```"]) {
+    const i = raw.indexOf(marker);
+    if (i !== -1 && i < end) end = i;
+  }
+  return raw.slice(0, end).trimStart();
+}
+
 export function parseA2ui(responseText: string): ParsedResponse {
   // Pull followups first so they never leak into the chat text.
   const { followups, stripped } = extractFollowups(responseText);

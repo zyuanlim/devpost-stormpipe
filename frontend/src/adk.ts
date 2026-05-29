@@ -2,6 +2,9 @@
 
 interface Part {
   text?: string;
+  // Gemini marks chain-of-thought summaries with thought:true. We stream these
+  // separately from the answer text so they never leak into the A2UI parse.
+  thought?: boolean;
 }
 interface Content {
   role?: string;
@@ -10,6 +13,9 @@ interface Content {
 interface Event {
   author?: string;
   content?: Content;
+  // ADK sets partial:true on incremental token deltas during SSE streaming and
+  // omits it (or sets false) on the final aggregated event for a segment.
+  partial?: boolean;
 }
 
 const USER_ID = "operator";
@@ -69,13 +75,38 @@ export async function createSession(
   }
 }
 
-// Run the agent once and return the concatenated text of the final model turn.
-export async function runAgent(
+// Split a turn's parts into answer text (the A2UI-bearing reply) and thought
+// summaries (Gemini chain-of-thought). The answer text is what parseA2ui later
+// folds into chat text + canvas surfaces, so thoughts must stay out of it.
+function splitParts(parts: Part[]): { text: string; thought: string } {
+  let text = "";
+  let thought = "";
+  for (const p of parts) {
+    if (!p.text) continue;
+    if (p.thought) thought += p.text;
+    else text += p.text;
+  }
+  return { text, thought };
+}
+
+export interface StreamUpdate {
+  // Full answer text accumulated so far (raw — still contains <a2ui-json> and
+  // <followups> blocks; the caller strips those for the live chat preview).
+  text: string;
+  // Full thought-summary text accumulated so far, if the model emits any.
+  thought: string;
+}
+
+// Run the agent with server-sent-event streaming. onUpdate fires on every token
+// delta so the chat can render text as it arrives; the resolved value is the
+// final raw answer text for parseA2ui (surfaces + followups commit at the end).
+export async function runAgentStream(
   appName: string,
   sessionId: string,
-  message: string
+  message: string,
+  onUpdate: (u: StreamUpdate) => void
 ): Promise<string> {
-  const r = await fetch("/run", {
+  const r = await fetch("/run_sse", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -83,27 +114,76 @@ export async function runAgent(
       user_id: USER_ID,
       session_id: sessionId,
       new_message: { role: "user", parts: [{ text: message }] },
-      streaming: false,
+      streaming: true,
     }),
   });
-  if (!r.ok) {
-    const body = await r.text();
-    throw new Error(`/run ${r.status}: ${body.slice(0, 300)}`);
+  if (!r.ok || !r.body) {
+    const body = r.body ? await r.text() : "";
+    throw new Error(`/run_sse ${r.status}: ${body.slice(0, 300)}`);
   }
-  const events: Event[] = await r.json();
 
-  // The final answer is the last event carrying model text. Concatenate text
-  // parts of the last text-bearing event from the orchestrator.
-  let lastText = "";
-  for (const ev of events) {
-    const parts = ev.content?.parts ?? [];
-    const text = parts
-      .map((p) => p.text ?? "")
-      .join("")
-      .trim();
-    if (text) lastText = text;
+  // Text from completed (non-partial) events; partial deltas accumulate on top
+  // and are folded into committed when the segment's final event lands. This is
+  // correct whether deltas arrive as separate partials or one final blob.
+  let committedText = "";
+  let committedThought = "";
+  let pendingText = "";
+  let pendingThought = "";
+
+  const emit = () =>
+    onUpdate({
+      text: committedText + pendingText,
+      thought: committedThought + pendingThought,
+    });
+
+  const handleEvent = (ev: Event) => {
+    const { text, thought } = splitParts(ev.content?.parts ?? []);
+    if (!text && !thought) return;
+    if (ev.partial) {
+      pendingText += text;
+      pendingThought += thought;
+    } else {
+      committedText += text;
+      committedThought += thought;
+      pendingText = "";
+      pendingThought = "";
+    }
+    emit();
+  };
+
+  const reader = r.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  const drain = () => {
+    // SSE frames are separated by a blank line. Parse each complete frame.
+    let sep: number;
+    while ((sep = buffer.indexOf("\n\n")) !== -1) {
+      const frame = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+      for (const line of frame.split("\n")) {
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === "[DONE]") continue;
+        try {
+          handleEvent(JSON.parse(payload) as Event);
+        } catch {
+          /* keep-alive comment or partial frame split mid-flight — skip */
+        }
+      }
+    }
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    drain();
   }
-  return lastText;
+  buffer += decoder.decode();
+  drain();
+
+  return committedText + pendingText;
 }
 
 export function newSessionId(): string {

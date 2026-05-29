@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { A2uiSurface, renderMarkdown } from "./a2ui/Renderer";
-import { parseA2ui } from "./a2ui/parse";
+import { liveChatText, parseA2ui } from "./a2ui/parse";
 import type { Surface } from "./a2ui/types";
 import {
   createSession,
   newSessionId,
   resolveAppName,
-  runAgent,
+  runAgentStream,
   type Pipeline,
 } from "./adk";
 import { cacheAgeLabel, clearCached, getCached, setCached } from "./cache";
@@ -14,6 +14,9 @@ import { cacheAgeLabel, clearCached, getCached, setCached } from "./cache";
 interface Turn {
   role: "user" | "agent";
   text: string;
+  // Live chain-of-thought summary, shown while the turn streams (if the model
+  // emits any). Cleared/ignored once the final answer text lands.
+  thought?: string;
   pending?: boolean;
 }
 
@@ -71,7 +74,22 @@ export function Workspace({ pipeline }: { pipeline: Pipeline }) {
       { role: "agent" as const, text: "", pending: true },
     ]);
     try {
-      const raw = await runAgent(name, sessionId, message);
+      // Stream the conversational text into the chat as tokens arrive. Canvas
+      // surfaces stay non-streamed — A2UI JSON can't render until a block is
+      // complete — so they commit once below, after the turn finishes.
+      const raw = await runAgentStream(name, sessionId, message, (u) => {
+        const preview = liveChatText(u.text);
+        setTurns((t) => {
+          const copy = [...t];
+          copy[copy.length - 1] = {
+            role: "agent",
+            text: preview,
+            thought: u.thought || undefined,
+            pending: true,
+          };
+          return copy;
+        });
+      });
       const { text, surfaces: parsed, followups: nextFollowups } = parseA2ui(raw);
       const greeting = text || (parsed.length ? "Updated the dashboard." : "Done.");
       setTurns((t) => {
@@ -203,7 +221,12 @@ export function Workspace({ pipeline }: { pipeline: Pipeline }) {
           {turns.map((turn, i) => (
             <div key={i} className={`turn ${turn.role}`}>
               <div className="bubble">
-                {turn.pending && <div className="spinner">thinking…</div>}
+                {turn.pending && turn.thought && (
+                  <div className="msg-thought">{turn.thought}</div>
+                )}
+                {turn.pending && !turn.text && !turn.thought && (
+                  <div className="spinner">thinking…</div>
+                )}
                 {turn.text && (
                   <div className="msg-text">
                     {turn.role === "agent"

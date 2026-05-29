@@ -4,6 +4,7 @@ import os
 from google.adk.agents import Agent
 from google.adk.apps import App
 from google.adk.models import Gemini
+from google.adk.planners import BuiltInPlanner
 from google.adk.tools import load_memory
 from google.genai import types
 
@@ -54,6 +55,22 @@ if _static_instruction is not None:
     ):
         _sub_agent.static_instruction = _static_instruction
 
+# Stream Gemini's chain-of-thought summaries so the UI can show "thinking" text
+# as it arrives. thinking_config must be set via a planner (NOT
+# generate_content_config) per ADK. The orchestrator auto-transfers to a
+# sub-agent that then produces the user-facing turn, so every agent that can
+# answer the operator needs the planner — otherwise the answering turn streams
+# no thoughts. Budget unset → model decides depth.
+_thinking_planner = BuiltInPlanner(
+    thinking_config=types.ThinkingConfig(include_thoughts=True)
+)
+for _sub_agent in (
+    pipeline_controller_agent,
+    schema_detective_agent,
+    dq_remediator_agent,
+):
+    _sub_agent.planner = _thinking_planner
+
 root_agent = Agent(
     name="stormpipe_orchestrator",
     model=Gemini(
@@ -67,6 +84,7 @@ root_agent = Agent(
     ),
     instruction=open("app/prompts/orchestrator.md").read(),
     static_instruction=_static_instruction,
+    planner=_thinking_planner,
     sub_agents=[
         pipeline_controller_agent,
         schema_detective_agent,
