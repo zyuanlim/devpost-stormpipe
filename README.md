@@ -51,30 +51,43 @@ This is the difference between a chatbot *about* a pipeline and an agent that ca
 ## Architecture
 
 ```
-                    ┌─────────────────────────────────────────────┐
-   Browser          │  Cloud Run (single origin, scales to zero)  │
- ┌──────────┐  /run │  ┌───────────────────────────────────────┐  │
- │ React SPA│──────────▶│  FastAPI (app.fast_api_app)           │  │
- │  + A2UI  │◀──────────│   • serves built SPA as StaticFiles   │  │
- │ renderer │  A2UI │  │   • ADK /run + session REST           │  │
- └──────────┘  trees │  │   • /pipelines, /feedback             │  │
-                    │  └───────────────┬───────────────────────┘  │
-                    │      ADK         │  orchestrator (Gemini 3.5 Flash)
-                    │   ┌──────────────┴───────────────┐          │
-                    │   ▼              ▼                ▼          │
-                    │ pipeline_     schema_          dq_           │
-                    │ controller    detective        remediator    │
-                    └───┬──────────────┬────────────────┬─────────┘
-                        │              │                │
-                   Fivetran REST   BigQuery        BigQuery + Memory Bank
-                   (source fix)   (schema diff)    (DQ rebuild, GHCN facts)
-                        │              │                │
-                        ▼              ▼                ▼
-                   Fivetran      ┌──────────────────────────────┐
-                   S3 connector  │ BigQuery: noaa_ghcn dataset   │
-                   (GHCN-Daily) ─▶│ observations (186.9M, misparsed)│
-                                 │ observations_clean (rebuilt)  │
-                                 └──────────────────────────────┘
+              ┌──────────────────────────────────┐
+              │              BROWSER             │
+              │    React SPA + A2UI renderer     │
+              │   chat (left) · canvas (right)   │
+              └────────────────┬─────────────────┘
+                  /run, sessions, /pipelines  (HTTP)
+                  ▲  A2UI component trees  │
+                  │                        ▼
+              ┌──────────────────────────────────┐
+              │            CLOUD RUN             │
+              │  FastAPI — serves SPA + ADK API  │
+              │  single origin · scales to zero  │
+              └────────────────┬─────────────────┘
+                               │
+              ┌──────────────────────────────────┐
+              │        Orchestrator agent        │
+              │     Gemini 3.5 Flash (global)    │
+              └──┬─────────────┬──────────────┬──┘
+                 │             │              │
+                 ▼             ▼              ▼
+           pipeline_       schema_          dq_
+           controller      detective        remediator
+                 │             │              │
+                 ▼             ▼              ▼
+           Fivetran        BigQuery       BigQuery +
+           REST API        INFO_SCHEMA    Memory Bank
+           (fix +          (drift /       (DQ rebuild,
+            resync)         misparse)      GHCN facts)
+                 │             │              │
+                 └─────────────┼──────────────┘
+                               ▼
+              ┌──────────────────────────────────┐
+              │   BigQuery dataset  noaa_ghcn    │
+              │   observations    186.9M rows    │
+              │     └─ header misparse (the bug) │
+              │   observations_clean  (rebuilt)  │
+              └──────────────────────────────────┘
 ```
 
 **Stack:** Google ADK 2.1 · Gemini 3.5 Flash (Vertex `global` endpoint) · Fivetran · BigQuery · Vertex AI Memory Bank · A2UI · React 18 + Vite + TypeScript · Cloud Run.
