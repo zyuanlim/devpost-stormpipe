@@ -200,8 +200,9 @@ function Node({ id, ctx }: { id: string; ctx: Ctx }) {
 
     case "Icon": {
       const name = (c.name as string) ?? "";
+      // Semantic color per status glyph (check/warning/error) via a name class.
       return (
-        <span className="a2-icon" title={name}>
+        <span className={`a2-icon a2-icon-${name}`} title={name}>
           {ICONS[name] ?? "•"}
         </span>
       );
@@ -244,9 +245,11 @@ function Node({ id, ctx }: { id: string; ctx: Ctx }) {
           style={{
             display: "flex",
             flexDirection: dir ? "row" : "column",
+            // Rows wrap so action-button groups never overflow a narrow panel.
+            flexWrap: dir ? "wrap" : undefined,
             justifyContent: mapJustify(justify),
             alignItems: mapAlign(align),
-            gap: 8,
+            gap: 10,
           }}
         >
           {ids.map((cid, i) => (

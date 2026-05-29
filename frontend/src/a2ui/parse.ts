@@ -1,4 +1,4 @@
-import type { A2uiMessage, Surface } from "./types";
+import type { A2uiComponent, A2uiMessage, Surface } from "./types";
 
 const BLOCK_RE = /<a2ui-json>([\s\S]*?)<\/a2ui-json>/g;
 const FOLLOWUPS_RE = /<followups>([\s\S]*?)<\/followups>/g;
@@ -85,6 +85,26 @@ function normalize(raw: unknown): A2uiMessage {
   const obj = raw as Record<string, unknown>;
   if ("updateComponents" in obj || "createSurface" in obj || "updateDataModel" in obj) {
     return obj as A2uiMessage;
+  }
+  // Flat envelopes the model sometimes emits without the update* wrapper, e.g.
+  // `{surfaceId, components:[...]}` or `{surfaceId, path, value}`. Re-wrap so
+  // folding (and untagged recovery) treat them as A2UI instead of leaking.
+  if ("surfaceId" in obj && Array.isArray(obj.components)) {
+    return {
+      updateComponents: {
+        surfaceId: obj.surfaceId as string,
+        components: obj.components as A2uiComponent[],
+      },
+    } as A2uiMessage;
+  }
+  if ("surfaceId" in obj && "path" in obj && "value" in obj) {
+    return {
+      updateDataModel: {
+        surfaceId: obj.surfaceId as string,
+        path: obj.path as string,
+        value: obj.value,
+      },
+    } as A2uiMessage;
   }
   const keys = Object.keys(obj);
   if (keys.length === 1 && obj[keys[0]] && typeof obj[keys[0]] === "object") {
@@ -228,7 +248,16 @@ export function parseA2ui(responseText: string): ParsedResponse {
     messages.push(...extractJsonObjects(m[1]));
     lastEnd = BLOCK_RE.lastIndex;
   }
-  text += stripped.slice(lastEnd);
+  let tail = stripped.slice(lastEnd);
+  // A truncated turn can leave an unterminated `<a2ui-json>` with no closing
+  // tag — drop from there to the end so half-streamed JSON never leaks into the
+  // chat. Also recover any A2UI objects from that dangling block first.
+  const openIdx = tail.indexOf("<a2ui-json>");
+  if (openIdx !== -1) {
+    messages.push(...extractJsonObjects(tail.slice(openIdx + "<a2ui-json>".length)));
+    tail = tail.slice(0, openIdx);
+  }
+  text += tail;
 
   // Belt-and-suspenders: if the model emitted A2UI JSON without the
   // <a2ui-json> tags (fenced or bare), recover it from the chat text so it
