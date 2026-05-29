@@ -36,6 +36,16 @@ const KICKOFF =
   "schema drift / misparse, and data-quality status. Keep your text reply to a " +
   "one-line greeting — put the detail in the dashboard surfaces.";
 
+// Deterministic fix / reparse action wired to a fixed canvas button so it is
+// ALWAYS present on first load — not dependent on the model emitting a fix
+// button inside the composed dashboard. Phrasing matches the orchestrator's
+// "proceed/fix" routing: execute the in-warehouse rebuild now, then surface the
+// source re-sync proposal for the fields only a re-sync can recover.
+const FIX_PROMPT =
+  "Fix it now: reparse the misparsed GHCN data — rebuild " +
+  "noaa_ghcn.observations_clean in BigQuery and apply it, then show the source " +
+  "re-sync proposal for the Q_FLAG / OBS_TIME fields only a re-sync can recover.";
+
 function mergeSurfaces(prev: Surface[], incoming: Surface[]): Surface[] {
   const map = new Map(prev.map((s) => [s.surfaceId, s]));
   const order = prev.map((s) => s.surfaceId);
@@ -112,14 +122,18 @@ export function Workspace({ pipeline }: { pipeline: Pipeline }) {
         setSurfaces((prev) => mergeSurfaces(prev, parsed));
         setRecentIds(new Set(parsed.map((s) => s.surfaceId)));
       }
-      if (nextFollowups.length) setFollowups(nextFollowups);
+      // First load (kickoff) shows a DETERMINISTIC set of suggested questions —
+      // the model's per-turn <followups> only take over once the operator has
+      // driven a follow-up turn. Keeps the opening experience reproducible.
+      if (opts.kickoff) setFollowups(DEFAULT_FOLLOWUPS);
+      else if (nextFollowups.length) setFollowups(nextFollowups);
       // Only the kickoff response is cacheable as the dashboard baseline —
       // follow-up turns are operator-driven and would poison the cache.
       if (opts.kickoff && parsed.length) {
         setCached(pipeline.connector_id, {
           text: greeting,
           surfaces: parsed,
-          followups: nextFollowups.length ? nextFollowups : DEFAULT_FOLLOWUPS,
+          followups: DEFAULT_FOLLOWUPS,
         });
         setCachedTs(Date.now());
       }
@@ -209,6 +223,14 @@ export function Workspace({ pipeline }: { pipeline: Pipeline }) {
               </span>
             )}
             {busy && <span className="canvas-busy">updating…</span>}
+            <button
+              className="canvas-fix"
+              onClick={() => send(FIX_PROMPT)}
+              disabled={busy || !appName}
+              title="Reparse the misparsed data and rebuild observations_clean now"
+            >
+              Fix &amp; reparse
+            </button>
             <button
               className="canvas-refresh"
               onClick={refresh}

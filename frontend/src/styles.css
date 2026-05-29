@@ -382,6 +382,21 @@ body {
 }
 .canvas-refresh:hover { color: var(--text); border-color: var(--accent); background: var(--panel); }
 .canvas-refresh:disabled { opacity: 0.5; cursor: not-allowed; }
+/* Deterministic primary action — always present on first canvas load. */
+.canvas-fix {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  border: 1px solid transparent;
+  color: #04101f;
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: var(--shadow);
+  transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
+}
+.canvas-fix:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(91, 157, 255, 0.4); }
+.canvas-fix:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
 .canvas-busy { color: var(--accent); font-size: 12px; font-style: italic; }
 .canvas-empty { color: var(--muted); padding: 64px 20px; text-align: center; font-size: 14px; }
 .canvas-grid {
