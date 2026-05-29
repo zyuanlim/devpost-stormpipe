@@ -118,11 +118,31 @@ body {
   color: var(--muted);
   font-style: italic;
   font-size: 0.85em;
-  border-left: 2px solid var(--border, #333);
+  border-left: 2px solid var(--border-soft);
   padding-left: 8px;
   margin-bottom: 6px;
   opacity: 0.8;
 }
+/* Collapsed thought summary on a finished turn — click to re-read. */
+.msg-thought-toggle { margin-bottom: 6px; }
+.msg-thought-toggle > summary {
+  cursor: pointer;
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted);
+  user-select: none;
+}
+.msg-thought-toggle > summary::-webkit-details-marker { display: none; }
+.msg-thought-toggle > summary::before { content: "▸"; font-size: 10px; }
+.msg-thought-toggle[open] > summary::before { content: "▾"; }
+.msg-thought-toggle > summary:hover { color: var(--accent); }
+.msg-thought-toggle > .msg-thought { margin-top: 6px; margin-bottom: 0; }
 
 .surface { margin-top: 10px; }
 
@@ -374,6 +394,7 @@ body {
   align-content: start;
 }
 .canvas-panel {
+  position: relative;
   min-width: 0;
   background: var(--panel-glass);
   backdrop-filter: blur(10px);
@@ -388,4 +409,31 @@ body {
   border-color: rgba(91, 157, 255, 0.4);
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35), 0 14px 40px rgba(0, 0, 0, 0.3);
+}
+/* The panel(s) the latest turn touched: steady accent ring so it stays
+   pinpointable, plus a one-shot pulse on arrival to draw the eye. */
+.canvas-panel--recent {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 22px rgba(91, 157, 255, 0.35);
+  animation: panel-pulse 1.4s ease-out 1;
+}
+@keyframes panel-pulse {
+  0% { box-shadow: 0 0 0 1px var(--accent), 0 0 0 0 rgba(91, 157, 255, 0.55); }
+  60% { box-shadow: 0 0 0 1px var(--accent), 0 0 0 10px rgba(91, 157, 255, 0); }
+  100% { box-shadow: 0 0 0 1px var(--accent), 0 0 22px rgba(91, 157, 255, 0.35); }
+}
+.canvas-panel-badge {
+  position: absolute;
+  top: -9px;
+  right: 12px;
+  z-index: 2;
+  padding: 2px 9px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #04101f;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  border-radius: 999px;
+  box-shadow: var(--shadow);
 }

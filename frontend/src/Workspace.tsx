@@ -51,12 +51,16 @@ export function Workspace({ pipeline }: { pipeline: Pipeline }) {
   const [sessionId] = useState(newSessionId);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [surfaces, setSurfaces] = useState<Surface[]>([]);
+  // surfaceIds the latest turn created/updated — highlighted + scrolled into
+  // view so the operator can pinpoint what their query just changed.
+  const [recentIds, setRecentIds] = useState<Set<string>>(new Set());
   const [followups, setFollowups] = useState<string[]>(DEFAULT_FOLLOWUPS);
   const [cachedTs, setCachedTs] = useState<number | null>(null);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const chatRef = useRef<HTMLDivElement>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
   const initStarted = useRef(false);
 
   async function execute(
@@ -94,10 +98,20 @@ export function Workspace({ pipeline }: { pipeline: Pipeline }) {
       const greeting = text || (parsed.length ? "Updated the dashboard." : "Done.");
       setTurns((t) => {
         const copy = [...t];
-        copy[copy.length - 1] = { role: "agent", text: greeting };
+        // Keep the streamed thought summary on the finished turn so it can be
+        // re-read from the collapsed toggle.
+        const prev = copy[copy.length - 1];
+        copy[copy.length - 1] = {
+          role: "agent",
+          text: greeting,
+          thought: prev?.thought,
+        };
         return copy;
       });
-      if (parsed.length) setSurfaces((prev) => mergeSurfaces(prev, parsed));
+      if (parsed.length) {
+        setSurfaces((prev) => mergeSurfaces(prev, parsed));
+        setRecentIds(new Set(parsed.map((s) => s.surfaceId)));
+      }
       if (nextFollowups.length) setFollowups(nextFollowups);
       // Only the kickoff response is cacheable as the dashboard baseline —
       // follow-up turns are operator-driven and would poison the cache.
@@ -156,6 +170,7 @@ export function Workspace({ pipeline }: { pipeline: Pipeline }) {
     clearCached(pipeline.connector_id);
     setCachedTs(null);
     setSurfaces([]);
+    setRecentIds(new Set());
     setTurns([]);
     setFollowups(DEFAULT_FOLLOWUPS);
     execute(appName, KICKOFF, false, { kickoff: true });
@@ -164,6 +179,14 @@ export function Workspace({ pipeline }: { pipeline: Pipeline }) {
   useEffect(() => {
     chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight });
   }, [turns]);
+
+  // Bring the just-updated panel into view so the operator's eye lands on what
+  // their query changed. Runs after surfaces commit (recentIds change).
+  useEffect(() => {
+    if (!recentIds.size) return;
+    const el = gridRef.current?.querySelector(".canvas-panel--recent");
+    el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [recentIds, surfaces]);
 
   function send(message: string) {
     if (!appName || busy || !message.trim()) return;
@@ -201,9 +224,17 @@ export function Workspace({ pipeline }: { pipeline: Pipeline }) {
             {composing ? "Composing dashboard…" : "No panels yet."}
           </div>
         ) : (
-          <div className="canvas-grid">
+          <div className="canvas-grid" ref={gridRef}>
             {surfaces.map((s) => (
-              <div key={s.surfaceId} className="canvas-panel">
+              <div
+                key={s.surfaceId}
+                className={`canvas-panel${
+                  recentIds.has(s.surfaceId) ? " canvas-panel--recent" : ""
+                }`}
+              >
+                {recentIds.has(s.surfaceId) && (
+                  <span className="canvas-panel-badge">updated</span>
+                )}
                 <A2uiSurface surface={s} onAction={(name) => send(name)} />
               </div>
             ))}
@@ -223,6 +254,12 @@ export function Workspace({ pipeline }: { pipeline: Pipeline }) {
               <div className="bubble">
                 {turn.pending && turn.thought && (
                   <div className="msg-thought">{turn.thought}</div>
+                )}
+                {!turn.pending && turn.thought && (
+                  <details className="msg-thought-toggle">
+                    <summary>Thinking</summary>
+                    <div className="msg-thought">{turn.thought}</div>
+                  </details>
                 )}
                 {turn.pending && !turn.text && !turn.thought && (
                   <div className="spinner">thinking…</div>
