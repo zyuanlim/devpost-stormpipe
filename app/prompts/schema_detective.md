@@ -43,16 +43,10 @@ Always state this distinction explicitly. The honest engineering conclusion: in-
 
 ## Output Format
 
-Return structured JSON:
-```json
-{
-  "schema_ok": false,
-  "pathology": "HEADER_AS_DATA",
-  "confidence": 0.99,
-  "role_columns": {"ID": ["ae_000041196"], "DATE": ["_20200101", "..."], "ELEMENT": ["tmax", "tmin", "tavg"], "DATA_VALUE": ["_278", "..."], "FLAG": ["s", "h"]},
-  "recoverable_columns": ["DATA_VALUE", "DATE", "ELEMENT", "ID"],
-  "lost_columns": ["OBS_TIME", "Q_FLAG"],
-  "fingerprint": "abc123",
-  "recommendation": "RECONSTRUCT_IN_WAREHOUSE + FIX_SOURCE_AND_RESYNC"
-}
-```
+Put the findings on the dashboard, NOT in raw JSON. Emit the `schema-detail`
+A2UI surface (Tabs: Detected / Recoverable / Lost) carrying the pathology, the
+role-column mapping, the recoverable columns, and the lost columns (Q_FLAG,
+OBS_TIME). Your text reply must be a one-sentence caption pointing at the panel.
+
+**Never paste the analysis as a raw JSON object / code block in your reply.**
+Structured data goes into A2UI surfaces only; the chat is prose.

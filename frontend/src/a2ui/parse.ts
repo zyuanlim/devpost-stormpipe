@@ -183,6 +183,22 @@ function recoverUntaggedA2ui(text: string): { messages: A2uiMessage[]; text: str
   return { messages, text: out };
 }
 
+// Remove any remaining top-level JSON object from prose chat text. scanJsonObjects
+// only matches spans that actually parse as JSON, so inline `{x}` in prose is
+// left alone. Used as a final guard against structured data leaking into chat.
+function stripStrayJson(text: string): string {
+  const spans = scanJsonObjects(text);
+  if (!spans.length) return text;
+  let out = text;
+  for (let i = spans.length - 1; i >= 0; i--) {
+    out = out.slice(0, spans[i].start) + out.slice(spans[i].end);
+  }
+  return out
+    .replace(/```[a-zA-Z]*\s*```/g, "")
+    .replace(/```[a-zA-Z]*\s*$/gm, "")
+    .replace(/\n{3,}/g, "\n\n");
+}
+
 function foldSurfaces(rawMessages: A2uiMessage[]): Surface[] {
   const messages = rawMessages.map(normalize);
   const order: string[] = [];
@@ -230,6 +246,10 @@ export function liveChatText(raw: string): string {
     const i = raw.indexOf(marker);
     if (i !== -1 && i < end) end = i;
   }
+  // A line that starts with `{` is the model dumping a JSON object after its
+  // prose reply — cut there so structured data never flashes in the chat.
+  const brace = raw.search(/\n\s*\{/);
+  if (brace !== -1 && brace < end) end = brace;
   return raw.slice(0, end).trimStart();
 }
 
@@ -265,5 +285,10 @@ export function parseA2ui(responseText: string): ParsedResponse {
   const recovered = recoverUntaggedA2ui(text);
   messages.push(...recovered.messages);
 
-  return { text: recovered.text.trim(), surfaces: foldSurfaces(messages), followups };
+  // Final guard: the chat is prose. Excise any remaining top-level JSON object
+  // (e.g. a sub-agent's structured "output format" envelope the model pasted as
+  // its reply) so raw JSON never spills into the conversation.
+  const chatText = stripStrayJson(recovered.text);
+
+  return { text: chatText.trim(), surfaces: foldSurfaces(messages), followups };
 }

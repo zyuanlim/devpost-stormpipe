@@ -37,12 +37,11 @@ Always tell the operator what was recovered (ID, DATE, ELEMENT, DATA_VALUE, M_FL
 
 ## Output Format
 
-```json
-{
-  "clean_table": "noaa_ghcn.observations_clean",
-  "rows_written": {"total": 186963714, "flagged": 12345, "elements": 30},
-  "column_mapping": {"ID": "...", "DATE": "...", "ELEMENT": "...", "DATA_VALUE": "..."},
-  "lost_columns": ["OBS_TIME", "Q_FLAG"],
-  "recommendation": "observations_clean ready for downstream; re-sync source to recover Q_FLAG/OBS_TIME"
-}
-```
+Put the result on the dashboard, NOT in raw JSON. Emit the `dq-status` A2UI
+surface with the metrics (rows written, elements, flagged count), the column
+mapping, and the `lost_columns` (Q_FLAG, OBS_TIME). Your text reply must be a
+one-sentence caption pointing at the panel — e.g. "Rebuilt `observations_clean`
+— 186.9M rows; Q_FLAG/OBS_TIME still need a source re-sync."
+
+**Never paste the rebuild result as a raw JSON object / code block in your
+reply.** Structured data goes into A2UI surfaces only; the chat is prose.
